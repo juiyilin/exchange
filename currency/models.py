@@ -22,7 +22,34 @@ class CurrencyModel(BaseTimeModel):
 
     def __str__(self):
         return f'{self.name}({self.code})'
-    
+
     def save(self, *args, **kwargs):
         self.code = self.code.upper()
+        return super().save(*args, **kwargs)
+
+
+class TradingPairModel(BaseTimeModel):
+    """
+    ex: BTC/USDT 表示 1 顆 BTC 值多少 USDT
+    """
+    base_currency = models.ForeignKey(CurrencyModel, on_delete=models.CASCADE, related_name='base_pairs', verbose_name='標的貨幣', help_text='買進或賣出的東西')
+    quote_currency = models.ForeignKey(CurrencyModel, on_delete=models.CASCADE, related_name='quote_pairs', verbose_name='計價貨幣')
+    symbol = models.CharField(max_length=20, default='', verbose_name='幣對名稱')
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = "幣對"
+        verbose_name_plural = "幣對"
+        constraints = [
+            models.UniqueConstraint(
+                fields=['base_currency', 'quote_currency', 'symbol'],
+                name='unique_currency_pair')]
+
+    def __str__(self):
+        return self.symbol
+
+    def save(self, *args, **kwargs):
+        if self.base_currency == self.quote_currency:
+            raise ValueError()
+        self.symbol = f'{self.base_currency.code}/{self.quote_currency.code}'
         return super().save(*args, **kwargs)

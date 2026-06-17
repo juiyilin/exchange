@@ -3,7 +3,7 @@ from django.db import models
 
 from common.func import generate_hex_uuid
 from common.models import BaseTimeModel
-from currency.models import CurrencyModel
+from currency.models import CurrencyModel, TradingPairModel
 
 from .constants import OrderStatus, OrderType
 
@@ -15,20 +15,14 @@ class OrderModel(BaseTimeModel):
     user = models.ForeignKey(
         User, on_delete=models.SET_NULL, null=True, verbose_name="用戶"
     )
-    currency1 = models.ForeignKey(
-        CurrencyModel,
+    trading_pair = models.ForeignKey(
+        TradingPairModel,
         on_delete=models.SET_NULL,
         null=True,
-        related_name="out_currency",
-        verbose_name="出去的貨幣",
+        related_name="trading_pair_orders",
+        verbose_name="幣對",
     )
-    currency2 = models.ForeignKey(
-        CurrencyModel,
-        on_delete=models.SET_NULL,
-        null=True,
-        related_name="in_currency",
-        verbose_name="進來的貨幣",
-    )
+    trading_pair_symbol = models.CharField(max_length=20, default='', verbose_name='幣對名稱')
     amount = models.DecimalField(max_digits=20, decimal_places=2, verbose_name="數量")
     price = models.DecimalField(max_digits=20, decimal_places=2, verbose_name="價格")
     order_type = models.CharField(
@@ -49,9 +43,13 @@ class OrderModel(BaseTimeModel):
         verbose_name = "訂單"
         verbose_name_plural = "訂單"
 
+    def save(self, *args, **kwargs):
+        self.trading_pair_symbol = self.trading_pair.symbol
+        return super().save(*args, **kwargs)
+
     def executed_transaction_amount(self):
         # 已成交的數量
-        if self.order_type == self.OrderType.BUY:
+        if self.order_type == OrderType.BUY:
             return sum(transaction.amount for transaction in self.buy_order.all())
         return sum(transaction.amount for transaction in self.sell_order.all())
 

@@ -3,7 +3,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
-from common.func import get_random_user_id
+from common.func import get_random_user
 from .models import WalletModel
 from .serializers import UserCreateUpdateSerializer, UserListSerializer, WalletSerializer
 
@@ -37,5 +37,6 @@ class WalletViewSet(ModelViewSet):
 
     def perform_create(self, serializer):
         # 這裡可以添加一些創建錢包前的邏輯，例如檢查用戶是否存在等
-        user_id = get_random_user_id()
-        serializer.save(user_id=user_id)
+        user = get_random_user()
+        # user = self.request.user
+        serializer.save(user=user)
