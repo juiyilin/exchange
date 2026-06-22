@@ -10,6 +10,7 @@
 ## 2. 概念
 
 ### 一張訂單描述什麼
+
 「我要買/賣、多少數量、什麼價格、哪兩種幣」。
 
 現況 `OrderModel` 用 `currency1`（出去的幣）和 `currency2`（進來的幣）+ `order_type`（買/賣）來描述。對照交易對 `BASE/QUOTE`：
@@ -20,36 +21,40 @@
 > 這個 currency1/currency2 的設計有點繞，進階改用交易對 model 會更直覺（見 `01_currency_spec.md` 6.1）。基本階段先沿用現況。
 
 ### 下單要凍結多少（現況邏輯，已實作）
+
 凍結的一定是 `currency1`（你要付出去的幣）：
 
 - **買單**：要付 `數量 × 價格` 的計價幣。例：買 1 BTC @ 30000，凍結 30000 USDT。
 - **賣單**：要付 `數量` 的標的幣。例：賣 1 BTC，凍結 1 BTC。
 
-對應現有程式碼 `OrderViewSet.required_currency1_amount()`：買單回傳 `amount × price`，賣單回傳 `amount`。
+對應現有程式碼 `OrderCreateUpdateSerializer.required_balance()`：買單回傳 `quantity × price`，賣單回傳 `quantity`。
 
 ### 限價單 vs 市價單
+
 - **限價單（Limit）**：指定價格。買單的 price 是「我最多願意付的價」，賣單的 price 是「我最少要收的價」。v0.1 只做這種。
 - **市價單（Market）**：不指定價、用市場最好價立刻成交。進階功能。
 
 ## 3. 資料模型（現況）
 
 ### OrderModel（繼承 BaseTimeModel）
-| 欄位 | 型別 | 說明 |
-|---|---|---|
-| `order_number` | CharField(32), unique | 訂單代號，預設 `generate_hex_uuid` |
-| `user` | FK → User (SET_NULL) | 下單者 |
-| `currency1` | FK → Currency (related_name=out_currency) | 出去的幣 |
-| `currency2` | FK → Currency (related_name=in_currency) | 進來的幣 |
-| `amount` | Decimal(20,2) | 數量（指 BASE 的數量） |
-| `price` | Decimal(20,2) | 價格 |
-| `order_type` | choices(BUY/SELL) | 買/賣 |
-| `status` | choices | 訂單狀態，預設 PENDING |
 
-**狀態（`OrderStatus`）**：`PENDING`（等待中）、`PARTIALLY_FILLED`（部分成交）、`FILLED`（已成交）、`CANCELED`（已取消）。
+| 欄位           | 型別                                      | 說明                               |
+| -------------- | ----------------------------------------- | ---------------------------------- |
+| `order_number` | CharField(32), unique                     | 訂單代號，預設 `generate_hex_uuid` |
+| `user`         | FK → User (SET_NULL)                      | 下單者                             |
+| `currency1`    | FK → Currency (related_name=out_currency) | 出去的幣                           |
+| `currency2`    | FK → Currency (related_name=in_currency)  | 進來的幣                           |
+| `quantity`     | Decimal(20,2)                             | 數量（指 BASE 的數量）             |
+| `price`        | Decimal(20,2)                             | 價格                               |
+| `order_type`   | choices(BUY/SELL)                         | 買/賣                              |
+| `status`       | choices                                   | 訂單狀態，預設 PENDING             |
+
+**狀態（`OrderStatus`）**：`PENDING`（等待中）、`PARTIALLY_FILLED`（部分成交）、`FULLY_FILLED`（全部成交）、`CANCELED`（已取消）。
 
 模型上已有兩個方法：
-- `executed_transaction_amount()` — 加總這張單已成交的數量。
-- `waiting_transaction_amount()` — `amount - 已成交`，即還沒成交的數量。
+
+- `executed_transaction_quantity()` — 加總這張單已成交的數量。
+- `waiting_transaction_quantity()` — `quantity - 已成交`，即還沒成交的數量。
 
 > 小提醒：這兩個方法目前引用 `self.OrderType`/`self.buy_order`，要確認 related_name 對得上（`TransactionModel.order1` 的 related_name 是 `buy_order`、`order2` 是 `sell_order`）。這個之後驗證撮合時會一起檢查。
 
@@ -66,7 +71,7 @@
    完全撮合    │                完全撮合      │
               ▼                            ▼
           ┌────────┐                  ┌────────┐
-          │ FILLED │ ◀────────────────│ FILLED │
+          │ FULLY_FILLED │ ◀────────────────│ FULLY_FILLED │
           └────────┘                  └────────┘
 
    任何「未完全成交」狀態（PENDING / PARTIALLY_FILLED）都可以被取消：
@@ -78,7 +83,8 @@
 ```
 
 規則：
-- 已 `FILLED` 或 `CANCELED` 的單是終態，不能再變。
+
+- 已 `FULLY_FILLED` 或 `CANCELED` 的單是終態，不能再變。
 - 只有 `PENDING` / `PARTIALLY_FILLED` 能被撮合或取消。
 
 ## 5. 下單流程（現況，已有雛形）
@@ -89,8 +95,7 @@
 2. 用 `OrderCreateUpdateSerializer` 驗證輸入；其中 `validate()` 檢查 `currency1 != currency2`。
 3. `check_wallet_balance()`：用 `select_for_update()` 鎖住該用戶 currency1 的錢包，算出要凍結的數量，檢查 `available_balance` 夠不夠，不夠就擋下。
 4. `transfer_to_frozen()`：可用 -= total、凍結 += total，存錢包。
-5. 存訂單（`perform_create`）。
-6.（待補）丟任務到 Celery 撮合：`send_to_match_market.delay()` —— 現況是註解掉的。
+5. 存訂單（`perform_create`）。6.（待補）丟任務到 Celery 撮合：`send_to_match_market.delay()` —— 現況是註解掉的。
 
 ## 6. 基本階段：你要完成的事
 

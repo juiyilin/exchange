@@ -43,30 +43,37 @@
 - [x] 驗證：API/admin 查得到餘額
 
 ## M2 — 下單與凍結　〔規格：03〕
-- [x] 確認下單 API 能建單且正確凍結餘額（買單凍 USDT=amount×price、賣單凍 BTC=amount，雙向驗證通過）
+- [x] 確認下單 API 能建單且正確凍結餘額（買單凍 USDT=quantity×price、賣單凍 BTC=quantity，雙向驗證通過）
 - [x] 確認餘額不足會被擋下並回 400（已驗證：回 400「用戶可用餘額不足」）
 - [x] 補訂單查詢 API：列表 ✅、單筆 ✅（待成交量尚未在 serializer 暴露，見下方備註）
 - [x] 驗證凍結：買 1 BTC@30000 → USDT 可用 −30000、凍結 +30000（已通過）
 - [x] 驗證超額：下超額單回 400 且餘額完全不變（已驗證，root USDT 餘額前後一致）
 
 > 備註：測試期間 `get_random_user_id()` 暫時固定回傳 1（root），方便驗證；正解在 M7 改認證。
-> 備註：訂單查詢若要顯示「待成交量」，需在 OrderSerializer 加一個 SerializerMethodField 對應 `waiting_transaction_amount()`（目前 fields="__all__" 不含 model 方法）。
+> 備註：訂單查詢若要顯示「待成交量」，需在 OrderSerializer 加一個 SerializerMethodField 對應 `waiting_transaction_quantity()`（目前 fields="__all__" 不含 model 方法）。
 > 備註：OrderModel 未在 admin 註冊，訂單只能用 API 查；若想在後台看，之後可補 transaction/admin.py。
 
-## M3 — 撮合與結算（同步版）★核心★　〔規格：04, 05〕
-- [ ] 把撮合寫成獨立函式（先同步）
-- [ ] 實作價格時間優先的對手查詢
-- [ ] 逐筆配對、算成交量(min)、建 `TransactionModel`、更新訂單狀態
-- [ ] 實作結算函式：原子搬動四個錢包餘額（含 `select_for_update`）
-- [ ] 處理部分成交（PARTIALLY_FILLED）
-- [ ] 驗證：同價買賣單完全成交、雙方餘額符合手算；部分成交狀態正確
-- [ ] 修正 `OrderModel.executed_transaction_amount` 的 related_name 對應（buy_order/sell_order）
+## M3 — 撮合與結算（同步版）★核心★　〔規格：04, 05〕　✅ 完成（13 測試全綠）
+- [x] 把撮合寫成獨立函式（`transaction/tasks.py` 的 `match_order(order_id)`，同步）
+- [x] 實作價格時間優先的對手查詢（`OrderQuerySet.get_waiting_match_orders`，排序 price → ordered_at → id）
+- [x] 逐筆配對、算成交量(min)、建 `TransactionModel`、更新訂單狀態
+- [x] 實作結算函式：原子搬動四個錢包餘額（`WalletModel.objects.transfer_asset`，用 F() + get_or_create 收款錢包）
+- [x] 處理部分成交（PARTIALLY_FILLED）
+- [x] 驗證：同價完全成交、部分成交雙方向、價格/時間優先、maker 定價、四錢包餘額（test/test_matching.py 9 條）
+- [x] 修正 `executed_transaction_quantity`（已改用 `OrderType` 與 buy_transactions/sell_transactions）
+
+> 結構變更紀錄（重要，給接手者）：已重構為 TradingPairModel（base/quote），訂單改用 trading_pair，
+> 數量欄位 amount→quantity，狀態 FILLED→FULLY_FILLED，Transaction 用 buy_order/sell_order。
+> 測試在 transaction/test/ 底下（test_matching.py、test_orders.py）。
+> 已知簡化：買單低於掛價成交的「多凍結退款」尚未做（M4）；撮合仍同步（M5 改 Celery）。
 
 ## M4 — 訂單生命週期　〔規格：03, 05〕
-- [ ] 取消訂單：解凍剩餘凍結餘額、狀態改 CANCELED
-- [ ] 多凍結退款（買單以低於掛價成交時退差額）
-- [ ] 訂單狀態機完整、終態不可再變
-- [ ] 驗證：掛單後取消，凍結正確退回可用
+- [ ] 取消訂單：解凍剩餘凍結餘額、狀態改 CANCELED（做成 POST /order/{id}/cancel/ 動作）
+- [ ] 多凍結退款（買單終態時退「原凍結 − 實際花費」差額；與取消共用同一個釋放函式）
+- [ ] 訂單狀態機完整、終態不可再變（鎖訂單 select_for_update + 重檢狀態，與撮合互斥）
+- [ ] 堵掉改單：拿掉 serializer update() 重設 ordered_at 那行；OrderViewSet 關掉 PUT/PATCH（http_method_names）
+- [ ] 決定：保留 ordered_at 欄位（不收斂到 created_at）
+- [ ] 驗證：掛單後取消，凍結正確退回可用；部分成交後取消只退剩餘
 
 ## M5 — 非同步化　〔規格：04〕
 - [ ] 啟動 Redis + Celery worker

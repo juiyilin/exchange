@@ -32,8 +32,8 @@ class TradingPairModel(BaseTimeModel):
     """
     ex: BTC/USDT 表示 1 顆 BTC 值多少 USDT
     """
-    base_currency = models.ForeignKey(CurrencyModel, on_delete=models.CASCADE, related_name='base_pairs', verbose_name='標的貨幣', help_text='買進或賣出的東西')
-    quote_currency = models.ForeignKey(CurrencyModel, on_delete=models.CASCADE, related_name='quote_pairs', verbose_name='計價貨幣')
+    base_currency = models.ForeignKey(CurrencyModel, on_delete=models.CASCADE, related_name='base_pairs', verbose_name='標的貨幣', help_text='買進或賣出的貨幣')
+    quote_currency = models.ForeignKey(CurrencyModel, on_delete=models.CASCADE, related_name='quote_pairs', verbose_name='計價貨幣', help_text='計算的貨幣')
     symbol = models.CharField(max_length=20, default='', verbose_name='幣對名稱')
     is_active = models.BooleanField(default=True)
 

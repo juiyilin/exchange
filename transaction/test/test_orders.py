@@ -52,10 +52,10 @@ class OrderCreateTest(APITestCase):
             user=self.user, asset_type=self.btc, available_balance=D(5)
         )
 
-    def _payload(self, order_type, pair, amount, price):
+    def _payload(self, order_type, pair, quantity, price):
         return {
             "trading_pair": pair.id,
-            "amount": str(amount),
+            "quantity": str(quantity),
             "price": str(price),
             "order_type": order_type,
         }

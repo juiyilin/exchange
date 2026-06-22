@@ -3,25 +3,23 @@ M3 撮合引擎 — 單元測試（這是「規格」，不是實作）
 
 ============================================================================
 這份測試定義了「正確的撮合 + 結算」應該有的行為。
-你的任務：建立 transaction/matching.py，實作一個函式 match_order(order)，
-讓底下每一條測試都變綠。撮合演算法本身由你寫，這裡只描述「對的結果」。
+撮合進入點 transaction.tasks.match_order(order_id)，讓底下每一條測試都變綠。
 
-------- match_order(order) 的契約（測試假設它這樣運作）-------
-輸入：order 是一張「剛下、且已凍結好餘額」的訂單（taker）。
-       （凍結是下單時做的；在測試裡我們用 _place() 幫你模擬凍結好的狀態。）
+------- match_order(order_id) 的契約（測試假設它這樣運作）-------
+輸入：order_id 是一張「剛下、且已凍結好餘額」的訂單（taker）的 pk。
+       （凍結是下單時做的；在測試裡我們用 place() 幫你模擬凍結好的狀態。）
 行為：
   1. 找出「同一個交易對、相反方向、價格能交叉、狀態為 PENDING/PARTIALLY_FILLED」
      的對手單，依「價格優先、時間其次」排序。
        - 幫買單找賣單：賣單.trading_pair==買單.trading_pair 且 order_type 相反，
-         且 賣價 <= 買價；排序＝賣價低→高、created_at 早→晚。
-       - 幫賣單找買單：對稱；排序＝買價高→低、created_at 早→晚。
+         且 賣價 <= 買價；排序＝賣價低→高、ordered_at 早→晚。
+       - 幫賣單找買單：對稱；排序＝買價高→低、ordered_at 早→晚。
   2. 逐筆配對，成交量 = min(我方待成交量, 對手待成交量)。
   3. 成交價 = maker（先掛在簿上那方）的價格。
   4. 每筆成交：
-       - 建立 TransactionModel(order1=買單, order2=賣單, amount=成交量, price=成交價)
-         （order1 永遠放買單、order2 永遠放賣單）
+       - 建立 TransactionModel(buy_order=買單, sell_order=賣單, quantity=成交量, price=成交價)
        - 結算四個錢包（見下）
-       - 更新雙方訂單 status：完全成交→FILLED；部分→PARTIALLY_FILLED
+       - 更新雙方訂單 status：完全成交→FULLY_FILLED；部分→PARTIALLY_FILLED
   5. 我方吃飽就停；沒吃飽就找下一個；對手掃完仍有剩，剩餘量留在簿上。
 
 ------- 結算規則（一筆成交：買方 B、賣方 S、數量 q、成交價 p）-------
@@ -47,10 +45,8 @@ from member.models import WalletModel
 from transaction.constants import OrderStatus, OrderType
 from transaction.models import OrderModel, TransactionModel
 
-# ↓↓↓ 這個 import 現在會失敗，因為 matching.py 還不存在。
-# 你要建立 transaction/matching.py 並定義 match_order(order)。
-# （若你想把函式放別的檔案，改這行 import 即可。）
-from transaction.matching import match_order
+# 撮合進入點：傳入 taker 訂單的 pk，在交易內完成撮合與結算。
+from transaction.tasks import match_order
 
 
 def D(x):
@@ -86,7 +82,7 @@ class MatchingBaseTestCase(TestCase):
         w.refresh_from_db()
         return w
 
-    def place(self, user, side, amount, price, created_at=None):
+    def place(self, user, side, amount, price, ordered_at=None):
         """
         模擬「下單並凍結餘額」：建立一張 PENDING 訂單，並把該凍結的餘額
         從 available 搬到 frozen（就像 OrderViewSet.create 做的那樣）。
@@ -105,20 +101,19 @@ class MatchingBaseTestCase(TestCase):
         w.frozen_balance += freeze_amount
         w.save()
 
-        order = OrderModel.objects.create(
+        create_kwargs = dict(
             user=user,
             trading_pair=self.pair,
-            amount=amount,
+            quantity=amount,
             price=price,
             order_type=side,
             status=OrderStatus.PENDING,
         )
-        if created_at is not None:
-            # created_at 是 auto_now_add，無法在 create 時指定，
-            # 用 queryset.update 繞過，做出可預測的時間先後（測時間優先用）。
-            OrderModel.objects.filter(pk=order.pk).update(created_at=created_at)
-            order.refresh_from_db()
-        return order
+        # ordered_at 是一般欄位（default=timezone.now），可在建立時直接指定，
+        # 用來做出可預測的時間先後（測時間優先用）。
+        if ordered_at is not None:
+            create_kwargs["ordered_at"] = ordered_at
+        return OrderModel.objects.create(**create_kwargs)
 
 
 class FullMatchTest(MatchingBaseTestCase):
@@ -132,20 +127,20 @@ class FullMatchTest(MatchingBaseTestCase):
         sell = self.place(self.alice, OrderType.SELL, 1, 30000)   # maker
         buy = self.place(self.bob, OrderType.BUY, 1, 30000)       # taker
 
-        match_order(buy)
+        match_order(buy.pk)
 
-        # 一筆成交、兩張單都 FILLED
+        # 一筆成交、兩張單都 FULLY_FILLED
         self.assertEqual(TransactionModel.objects.count(), 1)
         tx = TransactionModel.objects.get()
-        self.assertEqual(tx.amount, D(1))
+        self.assertEqual(tx.quantity, D(1))
         self.assertEqual(tx.price, D(30000))
-        self.assertEqual(tx.order1_id, buy.pk)    # order1 = 買單
-        self.assertEqual(tx.order2_id, sell.pk)   # order2 = 賣單
+        self.assertEqual(tx.buy_order_id, buy.pk)    # order1 = 買單
+        self.assertEqual(tx.sell_order_id, sell.pk)   # order2 = 賣單
 
         buy.refresh_from_db()
         sell.refresh_from_db()
-        self.assertEqual(buy.status, OrderStatus.FILLED)
-        self.assertEqual(sell.status, OrderStatus.FILLED)
+        self.assertEqual(buy.status, OrderStatus.FULLY_FILLED)
+        self.assertEqual(sell.status, OrderStatus.FULLY_FILLED)
 
         # 結算：賣方 alice 少 1 BTC（凍結歸零）、多 30000 USDT
         self.assertEqual(self.get_wallet(self.alice, self.btc).frozen_balance, D(0))
@@ -159,7 +154,7 @@ class FullMatchTest(MatchingBaseTestCase):
 
 class PartialFillTest(MatchingBaseTestCase):
     def test_taker_smaller_than_maker(self):
-        """賣 1 BTC@30000（掛單），買 0.4 → 成交 0.4，買 FILLED、賣 PARTIALLY_FILLED。"""
+        """賣 1 BTC@30000（掛單），買 0.4 → 成交 0.4，買 FULLY_FILLED、賣 PARTIALLY_FILLED。"""
         self.wallet(self.alice, self.btc, "5")
         self.wallet(self.alice, self.usdt, "0")
         self.wallet(self.bob, self.usdt, "100000")
@@ -168,17 +163,17 @@ class PartialFillTest(MatchingBaseTestCase):
         sell = self.place(self.alice, OrderType.SELL, 1, 30000)
         buy = self.place(self.bob, OrderType.BUY, "0.4", 30000)
 
-        match_order(buy)
+        match_order(buy.pk)
 
         self.assertEqual(TransactionModel.objects.count(), 1)
         tx = TransactionModel.objects.get()
-        self.assertEqual(tx.amount, D("0.4"))
+        self.assertEqual(tx.quantity, D("0.4"))
 
         buy.refresh_from_db()
         sell.refresh_from_db()
-        self.assertEqual(buy.status, OrderStatus.FILLED)
+        self.assertEqual(buy.status, OrderStatus.FULLY_FILLED)
         self.assertEqual(sell.status, OrderStatus.PARTIALLY_FILLED)
-        self.assertEqual(sell.waiting_transaction_amount(), D("0.6"))
+        self.assertEqual(sell.waiting_transaction_quantity(), D("0.6"))
 
         # 賣方：賣掉 0.4 BTC，凍結剩 0.6，得到 12000 USDT
         self.assertEqual(self.get_wallet(self.alice, self.btc).frozen_balance, D("0.6"))
@@ -188,7 +183,7 @@ class PartialFillTest(MatchingBaseTestCase):
         self.assertEqual(self.get_wallet(self.bob, self.usdt).frozen_balance, D(0))
 
     def test_taker_larger_than_maker(self):
-        """賣 0.4 BTC@30000（掛單），買 1 → 成交 0.4，賣 FILLED、買 PARTIALLY_FILLED、剩 0.6 留簿上。"""
+        """賣 0.4 BTC@30000（掛單），買 1 → 成交 0.4，賣 FULLY_FILLED、買 PARTIALLY_FILLED、剩 0.6 留簿上。"""
         self.wallet(self.alice, self.btc, "5")
         self.wallet(self.alice, self.usdt, "0")
         self.wallet(self.bob, self.usdt, "100000")
@@ -197,14 +192,14 @@ class PartialFillTest(MatchingBaseTestCase):
         sell = self.place(self.alice, OrderType.SELL, "0.4", 30000)
         buy = self.place(self.bob, OrderType.BUY, 1, 30000)
 
-        match_order(buy)
+        match_order(buy.pk)
 
         self.assertEqual(TransactionModel.objects.count(), 1)
         buy.refresh_from_db()
         sell.refresh_from_db()
-        self.assertEqual(sell.status, OrderStatus.FILLED)
+        self.assertEqual(sell.status, OrderStatus.FULLY_FILLED)
         self.assertEqual(buy.status, OrderStatus.PARTIALLY_FILLED)
-        self.assertEqual(buy.waiting_transaction_amount(), D("0.6"))
+        self.assertEqual(buy.waiting_transaction_quantity(), D("0.6"))
 
         # 買方：得 0.4 BTC，花 12000，凍結剩 30000-12000=18000（仍為未成交的 0.6 凍著）
         self.assertEqual(self.get_wallet(self.bob, self.btc).available_balance, D("0.4"))
@@ -229,13 +224,13 @@ class PriceTimePriorityTest(MatchingBaseTestCase):
         buy_carol = self.place(self.carol, OrderType.BUY, 1, 31000)
         sell = self.place(self.alice, OrderType.SELL, 1, 29000)  # taker
 
-        match_order(sell)
+        match_order(sell.pk)
 
         self.assertEqual(TransactionModel.objects.count(), 1)
         tx = TransactionModel.objects.get()
-        self.assertEqual(tx.order1_id, buy_carol.pk)   # 吃到 carol（最高買價）
+        self.assertEqual(tx.buy_order_id, buy_carol.pk)   # 吃到 carol（最高買價）
         self.assertEqual(tx.price, D(31000))           # 成交價＝maker(carol) 的 31000
-        self.assertEqual(tx.amount, D(1))
+        self.assertEqual(tx.quantity, D(1))
 
         # bob 的單沒被動到
         buy_bob.refresh_from_db()
@@ -261,16 +256,16 @@ class PriceTimePriorityTest(MatchingBaseTestCase):
 
         early = timezone.now() - timezone.timedelta(minutes=10)
         late = timezone.now() - timezone.timedelta(minutes=1)
-        buy_bob = self.place(self.bob, OrderType.BUY, 1, 30000, created_at=early)
-        buy_carol = self.place(self.carol, OrderType.BUY, 1, 30000, created_at=late)
+        buy_bob = self.place(self.bob, OrderType.BUY, 1, 30000, ordered_at=early)
+        buy_carol = self.place(self.carol, OrderType.BUY, 1, 30000, ordered_at=late)
         sell = self.place(self.alice, OrderType.SELL, "0.5", 30000)
 
-        match_order(sell)
+        match_order(sell.pk)
 
         self.assertEqual(TransactionModel.objects.count(), 1)
         tx = TransactionModel.objects.get()
-        self.assertEqual(tx.order1_id, buy_bob.pk)   # 較早的 bob 先成交
-        self.assertEqual(tx.amount, D("0.5"))
+        self.assertEqual(tx.buy_order_id, buy_bob.pk)   # 較早的 bob 先成交
+        self.assertEqual(tx.quantity, D("0.5"))
 
         buy_carol.refresh_from_db()
         self.assertEqual(buy_carol.status, OrderStatus.PENDING)   # carol 沒被動到
@@ -293,11 +288,11 @@ class MakerPriceTest(MatchingBaseTestCase):
         buy = self.place(self.bob, OrderType.BUY, 1, 31000)    # maker
         sell = self.place(self.alice, OrderType.SELL, 1, 30000)  # taker
 
-        match_order(sell)
+        match_order(sell.pk)
 
         tx = TransactionModel.objects.get()
         self.assertEqual(tx.price, D(31000))   # ← 重點：用 maker 的價
-        self.assertEqual(tx.amount, D(1))
+        self.assertEqual(tx.quantity, D(1))
         # 賣方 alice 收到 31000 USDT（不是 30000）
         self.assertEqual(self.get_wallet(self.alice, self.usdt).available_balance, D(31000))
         # 買方 bob 凍結 31000 全花掉、歸零
@@ -315,7 +310,7 @@ class NoCrossTest(MatchingBaseTestCase):
         self.place(self.alice, OrderType.SELL, 1, 31000)
         buy = self.place(self.bob, OrderType.BUY, 1, 30000)
 
-        match_order(buy)
+        match_order(buy.pk)
 
         self.assertEqual(TransactionModel.objects.count(), 0)
         buy.refresh_from_db()
@@ -328,7 +323,7 @@ class NoCrossTest(MatchingBaseTestCase):
 class ExecutedWaitingAmountTest(MatchingBaseTestCase):
     def test_executed_and_waiting_amount(self):
         """
-        驗證 OrderModel.executed_transaction_amount() / waiting_transaction_amount()。
+        驗證 OrderModel.executed_transaction_quantity() / waiting_transaction_quantity()。
         （順帶逼你修掉 self.OrderType 的 bug，改用 import 進來的 OrderType。）
         """
         self.wallet(self.alice, self.btc, "5")
@@ -339,11 +334,11 @@ class ExecutedWaitingAmountTest(MatchingBaseTestCase):
         sell = self.place(self.alice, OrderType.SELL, 1, 30000)
         buy = self.place(self.bob, OrderType.BUY, "0.3", 30000)
 
-        match_order(buy)
+        match_order(buy.pk)
 
         sell.refresh_from_db()
-        self.assertEqual(sell.executed_transaction_amount(), D("0.3"))
-        self.assertEqual(sell.waiting_transaction_amount(), D("0.7"))
+        self.assertEqual(sell.executed_transaction_quantity(), D("0.3"))
+        self.assertEqual(sell.waiting_transaction_quantity(), D("0.7"))
         buy.refresh_from_db()
-        self.assertEqual(buy.executed_transaction_amount(), D("0.3"))
-        self.assertEqual(buy.waiting_transaction_amount(), D(0))
+        self.assertEqual(buy.executed_transaction_quantity(), D("0.3"))
+        self.assertEqual(buy.waiting_transaction_quantity(), D(0))

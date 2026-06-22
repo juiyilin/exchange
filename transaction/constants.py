@@ -9,5 +9,5 @@ class OrderType(models.TextChoices):
 class OrderStatus(models.TextChoices):
     PENDING = "PENDING", "等待中"
     PARTIALLY_FILLED = "PARTIALLY_FILLED", "部分成交"
-    FILLED = "FILLED", "已成交"
+    FULLY_FILLED = "FULLY_FILLED", "全部成交"
     CANCELED = "CANCELED", "已取消"

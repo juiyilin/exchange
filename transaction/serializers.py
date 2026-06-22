@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.utils import timezone
 
 from currency.models import CurrencyModel, TradingPairModel
 from member.models import WalletModel
@@ -55,12 +56,12 @@ class OrderCreateUpdateSerializer(serializers.ModelSerializer):
         return wallet, required_balance
 
     def required_balance(self, data):
-        # 計算這筆訂單需要凍結的 currency1（出去的貨幣）數量
+        # 計算這筆訂單需要凍結的數量
         if data["order_type"] == OrderType.BUY:
-            # 買單：currency1 是計價幣，需付出 數量 × 價格
-            return data["amount"] * data["price"]
-        # 賣單：currency1 是標的幣，直接付出 數量
-        return data["amount"]
+            # 買單：計價幣，需付出 數量 × 價格
+            return data["quantity"] * data["price"]
+        # 賣單：標的幣，直接付出 數量
+        return data["quantity"]
 
     def to_internal_value(self, data):
         data = super().to_internal_value(data)

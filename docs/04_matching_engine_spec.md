@@ -56,7 +56,7 @@
        取對手賣單 S（價格 Ps、待成交量 Qs）
        成交量 = min(Qb 待成交, Qs 待成交)
        成交價 = maker（先掛者）的價格
-       → 建立一筆 TransactionModel(order1=買單, order2=賣單, amount=成交量, price=成交價)
+       → 建立一筆 TransactionModel(buy_order=買單, sell_order=賣單, quantity=成交量, price=成交價)
        → 觸發結算（見 05）：搬動雙方凍結/可用餘額
        → 更新兩張單的 status（FILLED 或 PARTIALLY_FILLED）
        Qb -= 成交量
@@ -65,7 +65,7 @@
 （賣單進來時邏輯對稱）
 ```
 
-「待成交量」就是 `OrderModel.waiting_transaction_amount()`（`amount - 已成交`）。
+「待成交量」就是 `OrderModel.waiting_transaction_quantity()`（`quantity - 已成交`）。
 
 ### 部分成交（Partial Fill）
 撮合不保證一次吃完。買單要 2 BTC、簿上最佳賣單只有 0.8 BTC，就先成交 0.8，買單剩 1.2 繼續找下一張賣單；找不到就留 1.2 在簿上，狀態 `PARTIALLY_FILLED`。
@@ -77,7 +77,7 @@
 | `transaction_number` | CharField(32), unique | 成交代號 |
 | `order1` | FK → Order (related_name=buy_order) | 買單 |
 | `order2` | FK → Order (related_name=sell_order) | 賣單 |
-| `amount` | Decimal(20,2) | 成交數量 |
+| `quantity` | Decimal(20,2) | 成交數量 |
 | `price` | Decimal(20,2) | 成交價格 |
 
 每撮合一次就產生一筆 TransactionModel。一張大單可能對應多筆成交。

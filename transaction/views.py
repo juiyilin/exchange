@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from common.func import get_random_user
+from transaction.tasks import send_to_match_market, match_order
 
 from .constants import OrderType
 from .models import OrderModel
@@ -31,11 +32,14 @@ class OrderViewSet(ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         wallet, required_balance = serializer.context['wallet'], serializer.context['required_balance']
+
         self.transfer_to_frozen(wallet, required_balance)
-        self.perform_create(serializer)
+        order = serializer.save()
         headers = self.get_success_headers(serializer.data)
         # celery 送到撮合市場
-        # send_to_match_market.delay()
+        # send_to_match_market.delay(order.id)
+
+        match_order(order.id)
 
         return Response(
             {"message": "Order created successfully"}, status=status.HTTP_201_CREATED, headers=headers
