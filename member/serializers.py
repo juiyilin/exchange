@@ -39,3 +39,14 @@ class WalletSerializer(serializers.ModelSerializer):
     class Meta:
         model = WalletModel
         fields = ['asset_type', 'available_balance']
+
+
+class WithdrawSerializer(serializers.Serializer):
+    asset_type_id = serializers.IntegerField()
+    quantity = serializers.DecimalField(max_digits=20, decimal_places=2, min_value=0)
+
+    def validate_quantity(self, value):
+        if value == 0:
+            raise serializers.ValidationError('需大於 0')
+        return value
+
