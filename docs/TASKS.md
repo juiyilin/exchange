@@ -15,21 +15,24 @@
 
 ---
 
-## 目前進度（最後更新：建立文件當下）
+## 目前進度（最後更新：M3 完成、基本只剩模擬出金）
 
-已存在的程式碼雛形：
-- 四個 app 結構、`BaseTimeModel`、`CurrencyModel`、`UserProfileModel`、`WalletModel`、`OrderModel`、`TransactionModel` 都已建好。
-- 下單 API（`OrderViewSet.create`）已能驗證餘額並凍結。
-- Celery/Redis/Postgres 相依已裝、`celery.py` 已設定。
+**節奏原則：先把「基本」功能全部做完，再進入「進階」。**（基本/進階的分類見 `00_overall_spec.md` 第 5 節功能總表）
 
-已知技術債/未完成：
-- 撮合引擎 `send_to_match_market` 是空函式，下單裡的 `.delay()` 被註解。
-- 用 `get_random_user_id()` 隨機指派用戶，**還沒有真正的認證**。
-- `currency/views.py` 是空的；`TransactionViewSet` 在 urls 被註解。
-- 結算邏輯尚未實作。
-- 還沒做取消訂單、部分成交退款。
+已完成：
+- M1 幣別與錢包、M2 下單與凍結、M3 撮合與結算（同步）全部完成並有測試。
+- `OrderViewSet.create` 已串接 `match_order(order.id)`，下單即撮合（端到端）。
+- 重構：TradingPairModel（base/quote）、欄位 quantity、狀態 FULLY_FILLED、Transaction 用 buy_order/sell_order。
+- 結算 `WalletModel.objects.transfer_asset`（F() + 收款錢包 get_or_create）。
+- 測試在 `transaction/test/`（test_matching、test_orders、test_order_create_matching）。
 
-**下一步建議從 M1 / M2 的驗證開始，再進入 M3（撮合結算）這個核心。**
+**✅ v0.1「基本」功能已全部完成（含模擬出金）。下一步進入「進階」階段：建議從 M4（取消訂單 + 多凍結退款 + 堵掉改單）開始。**
+
+已知技術債（屬進階，之後處理）：
+- `get_random_user()` 隨機指派用戶，**還沒有真正的認證**（M7）。
+- 撮合仍同步，`.delay()` 註解中（M5）。
+- 買單低於掛價成交的「多凍結退款」未做（進階 M4）。
+- 取消訂單未做（進階 M4）。
 
 ---
 
@@ -39,7 +42,7 @@
 - [x] 建立幣別 USDT、BTC（已完成，CurrencyModel 還加了 __str__ 與 save() 自動大寫）
 - [x] 建立測試用戶（root / user），併建 USDT / BTC 錢包（4 個錢包齊全）
 - [x] 模擬入金：USDT/BTC 錢包都有初始可用餘額
-- [ ] （選做）`CurrencyViewSet` 查詢 API + URL（尚未做，currency 未掛 URL）
+- [x] （選做）幣別查詢 API（`/api/currency/` 已掛 URL）
 - [x] 驗證：API/admin 查得到餘額
 
 ## M2 — 下單與凍結　〔規格：03〕
@@ -67,7 +70,22 @@
 > 測試在 transaction/test/ 底下（test_matching.py、test_orders.py）。
 > 已知簡化：買單低於掛價成交的「多凍結退款」尚未做（M4）；撮合仍同步（M5 改 Celery）。
 
-## M4 — 訂單生命週期　〔規格：03, 05〕
+## M-基本收尾 — 模擬出金　〔規格：06 §2/§3〕　✅ 完成
+- [x] `POST /api/user/wallet/withdraw/`：`WalletViewSet` 的 `@action(detail=False, methods=['post'])`
+- [x] body `{asset_type_id, quantity}`；用戶 `get_random_user()`；全程 `@transaction.atomic`
+- [x] `select_for_update` 鎖錢包；錢包不存在 / quantity≤0 / 可用不足 各回 400（餘額不變）
+- [x] 通過 → `available_balance -= quantity`，回 200。只動 available、不碰 frozen；Decimal
+- [x] 不寫紀錄/log（延到後續/範圍 2）
+- [x] 驗證：`member/test/test_withdraw.py`（出金成功、領光、超額擋、凍結不可領、≤0 擋、無錢包擋）
+
+> ✅ v0.1 的「基本」功能全部完成（M1 幣別錢包、M2 下單凍結、M3 撮合結算、模擬入金/出金）。
+> 測試現都在各 app 的 `test/` 資料夾下。接下來進入「進階」階段（M4 以後）。
+
+---
+
+# ===== 以下為「進階」階段（基本全部完成後才做）=====
+
+## M4 — 訂單生命週期【進階】　〔規格：03, 05〕
 - [ ] 取消訂單：解凍剩餘凍結餘額、狀態改 CANCELED（做成 POST /order/{id}/cancel/ 動作）
 - [ ] 多凍結退款（買單終態時退「原凍結 − 實際花費」差額；與取消共用同一個釋放函式）
 - [ ] 訂單狀態機完整、終態不可再變（鎖訂單 select_for_update + 重檢狀態，與撮合互斥）
@@ -91,6 +109,13 @@
 - [ ] 註冊 / 登入 / Token 驗證
 - [ ] 移除 `get_random_user_id`，所有操作綁 `request.user`
 - [ ] 權限：只能操作自己的錢包/訂單
+
+## M-日誌與帳本【進階】　〔規格：07〕
+- [ ] `LedgerEntry`：每次餘額變動（凍結/解凍/結算/退款/入出金/手續費）寫一筆 append-only 紀錄，與餘額變動同一 atomic
+- [ ] 在各業務函式顯式寫入（不要用 signal）：下單凍結、撮合結算、取消/退款、入金、出金
+- [ ] `DepositWithdrawModel`：入出金業務紀錄（status、tx_hash/address，範圍 1 留空）
+- [ ] 對帳：錢包餘額 == 該錢包所有 ledger delta 總和
+- [ ] 注意：設計已定案於 `07_logging_audit_spec.md`；基本階段不做，這裡是延後實作的依據
 
 ## M8（升級到範圍 2）— 測試鏈入金/出金　〔規格：06〕
 - [ ] 加 `DepositWithdrawModel`（含 tx_hash / address 欄位）

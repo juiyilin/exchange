@@ -184,4 +184,5 @@ member  ←─── transaction(下單要檢查並凍結錢包餘額)
 | `04_matching_engine_spec.md`  | 撮合引擎演算法                |
 | `05_settlement_spec.md`       | 成交結算與餘額不變量          |
 | `06_deposit_withdraw_spec.md` | 入金/出金（模擬，預留測試鏈） |
+| `07_logging_audit_spec.md`    | 日誌與帳本（LedgerEntry / 入出金紀錄，設計定案、實作延後） |
 | `TASKS.md`                    | 可接手的分階段待辦清單        |
