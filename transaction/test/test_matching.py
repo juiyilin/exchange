@@ -342,3 +342,34 @@ class ExecutedWaitingAmountTest(MatchingBaseTestCase):
         buy.refresh_from_db()
         self.assertEqual(buy.executed_transaction_quantity(), D("0.3"))
         self.assertEqual(buy.waiting_transaction_quantity(), D(0))
+
+
+class SelfTradePreventionTest(MatchingBaseTestCase):
+    """
+    自我成交防護（STP）：同一個人的買單與賣單即使價格交叉，也不該互相成交。
+    撮合應在 get_waiting_match_orders 用 .exclude(user=order.user) 跳過自己的單。
+    （實作前這條會紅；加了 exclude 後變綠。）
+    """
+
+    def test_no_self_trade(self):
+        """alice 同時掛賣 1@30000 與買 1@30000 → 不成交，兩張單都留簿上、凍結不動。"""
+        self.wallet(self.alice, self.btc, "5")
+        self.wallet(self.alice, self.usdt, "100000")
+
+        sell = self.place(self.alice, OrderType.SELL, 1, 30000)  # maker，先掛
+        buy = self.place(self.alice, OrderType.BUY, 1, 30000)    # taker，同一人
+
+        match_order(buy.pk)
+
+        # 不該產生任何成交
+        self.assertEqual(TransactionModel.objects.count(), 0)
+
+        # 兩張單都還在等待中
+        sell.refresh_from_db()
+        buy.refresh_from_db()
+        self.assertEqual(sell.status, OrderStatus.PENDING)
+        self.assertEqual(buy.status, OrderStatus.PENDING)
+
+        # 凍結原封不動：BTC 凍 1、USDT 凍 30000
+        self.assertEqual(self.get_wallet(self.alice, self.btc).frozen_balance, D(1))
+        self.assertEqual(self.get_wallet(self.alice, self.usdt).frozen_balance, D(30000))

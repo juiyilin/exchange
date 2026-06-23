@@ -10,6 +10,7 @@ from .constants import OrderStatus, OrderType
 
 class OrderQuerySet(models.QuerySet):
     def get_waiting_match_orders(self, order):
+        """取得待撮合單"""
         waiting_match_order_type = set(OrderType.values) - set([order.order_type])
         available_match_status = [OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED]
         if order.order_type == OrderType.BUY:
@@ -27,6 +28,8 @@ class OrderQuerySet(models.QuerySet):
                 status__in=available_match_status,
                 ordered_at__lte=order.ordered_at,
                 **price_filter
+            ).exclude(
+                user=order.user
             ).order_by(order_by_price, 'ordered_at', 'id')
         return waiting_match_orders
 
