@@ -3,6 +3,7 @@ from django.db import models
 from django.db.models import F
 from common.models import BaseTimeModel
 from currency.models import CurrencyModel
+from transaction.constants import OrderStatus
 
 
 class UserProfileModel(BaseTimeModel):
@@ -38,6 +39,17 @@ class WalletQuerySet(models.QuerySet):
         self.get_or_create(user=seller, asset_type=quote_currency)
         self.filter(user=seller, asset_type=base_currency).update(frozen_balance=F('frozen_balance') - transaction.quantity)
         self.filter(user=seller, asset_type=quote_currency).update(available_balance=F('available_balance') + total_amount)
+
+    def release_frozen(self, order):
+        """取消 或 全部成交 後要處理多餘的凍結"""
+        if order.status in [OrderStatus.FULLY_FILLED, OrderStatus.CANCELED]:
+            current_frozen = order.get_current_frozen()
+            asset_type = order.get_asset_type()
+            wallet = self.get(user=order.user, asset_type=asset_type)
+            wallet.frozen_balance -= current_frozen
+            wallet.available_balance += current_frozen
+            wallet.save()
+
 
 
 class WalletManager(models.Manager.from_queryset(WalletQuerySet)):

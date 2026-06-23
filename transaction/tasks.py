@@ -20,17 +20,17 @@ def match_order(order_id):
     """
     with transaction.atomic():
         try:
-            order = OrderModel.objects.select_for_update().get(id=order_id)
+            taker = OrderModel.objects.select_for_update().get(id=order_id)
         except OrderModel.DoesNotExist:
             return
 
         maker_orders = deque(
-            OrderModel.objects.select_for_update().get_waiting_match_orders(order)
+            OrderModel.objects.select_for_update().get_waiting_match_orders(taker)
         )
         if not maker_orders:
             return
 
-        taker_remaining = order.quantity
+        taker_remaining = taker.quantity
 
         while taker_remaining > 0 and maker_orders:
             maker = maker_orders.popleft()
@@ -39,10 +39,10 @@ def match_order(order_id):
                 continue
 
             matched = min(taker_remaining, maker_remaining)
-            if order.order_type == OrderType.BUY:
-                buy_order, sell_order = order, maker
+            if taker.order_type == OrderType.BUY:
+                buy_order, sell_order = taker, maker
             else:
-                buy_order, sell_order = maker, order
+                buy_order, sell_order = maker, taker
 
             new_transaction = TransactionModel.objects.create(
                 buy_order=buy_order,
@@ -54,6 +54,8 @@ def match_order(order_id):
 
             taker_remaining -= matched
             maker.mark_maker_status(matched, maker_remaining)
+            WalletModel.objects.release_frozen(maker)
 
-        order.mark_taker_status(taker_remaining)
+        taker.mark_taker_status(taker_remaining)
+        WalletModel.objects.release_frozen(taker)
     return 

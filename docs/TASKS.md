@@ -15,7 +15,7 @@
 
 ---
 
-## 目前進度（最後更新：M3 完成、基本只剩模擬出金）
+## 目前進度（最後更新：M4 訂單生命週期完成，測試全綠 25 條）
 
 **節奏原則：先把「基本」功能全部做完，再進入「進階」。**（基本/進階的分類見 `00_overall_spec.md` 第 5 節功能總表）
 
@@ -26,13 +26,14 @@
 - 結算 `WalletModel.objects.transfer_asset`（F() + 收款錢包 get_or_create）。
 - 測試在 `transaction/test/`（test_matching、test_orders、test_order_create_matching）。
 
-**✅ v0.1「基本」功能已全部完成（含模擬出金）。下一步進入「進階」階段：建議從 M4（取消訂單 + 多凍結退款 + 堵掉改單）開始。**
+**✅ v0.1「基本」+ M4 訂單生命週期已完成。下一步建議 M5（非同步化）或 M6（併發安全）。**
 
 已知技術債（屬進階，之後處理）：
-- `get_random_user()` 隨機指派用戶，**還沒有真正的認證**（M7）。
+- `get_random_user()` 隨機指派用戶，**還沒有真正的認證**（M7）；cancel 目前用 pk、未綁擁有者。
 - 撮合仍同步，`.delay()` 註解中（M5）。
-- 買單低於掛價成交的「多凍結退款」未做（進階 M4）。
-- 取消訂單未做（進階 M4）。
+- 撮合的完整併發序列化（同交易對互斥）尚未做，目前只有 cancel 的 select_for_update + 重檢（M6）。
+
+已完成（M4）：取消訂單、多凍結退款、終態不可變、擋改單（PUT/PATCH→405）。
 
 ---
 
@@ -85,13 +86,20 @@
 
 # ===== 以下為「進階」階段（基本全部完成後才做）=====
 
-## M4 — 訂單生命週期【進階】　〔規格：03, 05〕
-- [ ] 取消訂單：解凍剩餘凍結餘額、狀態改 CANCELED（做成 POST /order/{id}/cancel/ 動作）
-- [ ] 多凍結退款（買單終態時退「原凍結 − 實際花費」差額；與取消共用同一個釋放函式）
-- [ ] 訂單狀態機完整、終態不可再變（鎖訂單 select_for_update + 重檢狀態，與撮合互斥）
-- [ ] 堵掉改單：拿掉 serializer update() 重設 ordered_at 那行；OrderViewSet 關掉 PUT/PATCH（http_method_names）
-- [ ] 決定：保留 ordered_at 欄位（不收斂到 created_at）
-- [ ] 驗證：掛單後取消，凍結正確退回可用；部分成交後取消只退剩餘
+## M4 — 訂單生命週期【進階】　〔規格：03, 05〕　✅ 完成（測試全綠，25 條）
+- [x] 取消訂單：解凍剩餘凍結餘額、狀態改 CANCELED（POST /order/{id}/cancel/，@action detail=True）
+- [x] 多凍結退款（買單終態時退「原凍結 − 實際花費」差額；與取消共用 release_frozen）
+- [x] 訂單狀態機完整、終態不可再變（cancel 內 select_for_update 鎖訂單 + 重檢狀態擋終態）
+- [x] 堵掉改單：OrderViewSet 設 `http_method_names = ['get', 'post']`，PUT/PATCH 回 405
+- [x] 決定：保留 ordered_at 欄位（不收斂到 created_at）
+- [x] 驗證：member/transaction 測試全綠（取消全退/只退剩餘、多凍退款、終態擋取消、防重複退、擋改單）
+
+> 實作重點（給接手者）：
+> - `release_frozen(order)` 在 `member/models.py` WalletQuerySet，公式：買 `quantity*price − Σ(t.qty*t.price)`、賣 `quantity − Σ(t.qty)`，只在 order 進終態(FULLY_FILLED/CANCELED)時把差額 frozen→available。
+> - 心智模型：**任何訂單一進終態就 release_frozen，不分 maker/taker**。撮合 tasks.py 裡 maker 與 taker 各在 `mark_*_status` 之後呼叫一次。
+> - 踩過的坑：`release_frozen(maker)` 必須擺在 `mark_maker_status` 之後，否則 maker 狀態還沒變終態 → no-op，「先 taker 部分成交、後當 maker 成交完」的多凍會卡住不退（已加迴歸測試 OverFreezeTakerThenMakerTest）。
+> - 新測試檔：`transaction/test/test_cancel_refund.py`（9 條）。
+> - 併發互斥僅做到 cancel 的 select_for_update + 重檢；完整序列化留 M6。
 
 ## M5 — 非同步化　〔規格：04〕
 - [ ] 啟動 Redis + Celery worker

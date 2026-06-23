@@ -69,15 +69,30 @@ class OrderModel(BaseTimeModel):
 
     def mark_maker_status(self, matched_quantity, remaining):
         """修改先掛單者(maker)的狀態"""
-        self.status = OrderStatus.FULLY_FILLED if matched_quantity >= remaining else OrderStatus.PARTIALLY_FILLED
+        if matched_quantity >= remaining:
+            self.status = OrderStatus.FULLY_FILLED
+        else:
+            self.status = OrderStatus.PARTIALLY_FILLED
         self.save()
 
     def mark_taker_status(self, remaining):
         """修改吃單者(taker)的狀態"""
-        self.status = OrderStatus.FULLY_FILLED if remaining <= 0 else OrderStatus.PARTIALLY_FILLED
+        if remaining <= 0:
+            self.status = OrderStatus.FULLY_FILLED
+        else:
+            self.status = OrderStatus.PARTIALLY_FILLED
         self.save()
 
+    def get_current_frozen(self):
+        """取得目前的凍結餘額"""
+        if self.order_type == OrderType.BUY:
+            return self.quantity * self.price - sum(transaction.quantity * transaction.price for transaction in self.buy_transactions.all())
+        return self.quantity - sum(transaction.quantity for transaction in self.sell_transactions.all())
 
+    def get_asset_type(self):
+        if self.order_type == OrderType.BUY:
+            return self.trading_pair.quote_currency
+        return self.trading_pair.base_currency
 
 
 class TransactionModel(BaseTimeModel):
