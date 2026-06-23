@@ -15,7 +15,7 @@
 
 ---
 
-## 目前進度（最後更新：M4 訂單生命週期完成，測試全綠 25 條）
+## 目前進度（最後更新：M5 非同步化 + 自我成交防護完成）
 
 **節奏原則：先把「基本」功能全部做完，再進入「進階」。**（基本/進階的分類見 `00_overall_spec.md` 第 5 節功能總表）
 
@@ -26,14 +26,15 @@
 - 結算 `WalletModel.objects.transfer_asset`（F() + 收款錢包 get_or_create）。
 - 測試在 `transaction/test/`（test_matching、test_orders、test_order_create_matching）。
 
-**✅ v0.1「基本」+ M4 訂單生命週期已完成。下一步建議 M5（非同步化）或 M6（併發安全）。**
+**✅ v0.1「基本」+ M4 訂單生命週期 + M5 非同步化 + 自我成交防護已完成。下一步建議 M6（併發安全）或 M7（認證）。**
 
 已知技術債（屬進階，之後處理）：
 - `get_random_user()` 隨機指派用戶，**還沒有真正的認證**（M7）；cancel 目前用 pk、未綁擁有者。
-- 撮合仍同步，`.delay()` 註解中（M5）。
-- 撮合的完整併發序列化（同交易對互斥）尚未做，目前只有 cancel 的 select_for_update + 重檢（M6）。
+- 撮合的完整併發序列化（同交易對互斥、撮合內對訂單/錢包 select_for_update）尚未做，目前只有 cancel 的 select_for_update + 重檢（M6）。
 
 已完成（M4）：取消訂單、多凍結退款、終態不可變、擋改單（PUT/PATCH→405）。
+已完成（M5）：下單 `.delay()` 非同步撮合、Redis+worker、commit 後送任務、測試 eager。
+已完成（補強）：自我成交防護 STP。
 
 ---
 
@@ -101,11 +102,25 @@
 > - 新測試檔：`transaction/test/test_cancel_refund.py`（9 條）。
 > - 併發互斥僅做到 cancel 的 select_for_update + 重檢；完整序列化留 M6。
 
-## M5 — 非同步化　〔規格：04〕
-- [ ] 啟動 Redis + Celery worker
-- [ ] 下單改成 `send_to_match_market.delay()`，API 秒回
-- [ ] 撮合在 Celery worker 跑
-- [ ] 驗證：下單立即回應，背景完成撮合
+## M5 — 非同步化　〔規格：04〕　✅ 完成
+- [x] 啟動 Redis（Docker：`docker run -d --name exchange-redis -p 6373:6379 redis:7`）+ Celery worker（`uv run celery -A exchange worker -l info`）
+- [x] 下單改成 `send_to_match_market.delay()`，API 秒回
+- [x] 撮合在 Celery worker 跑（worker log 可見 `send_to_match_market` received/succeeded）
+- [x] 驗證：下單立即回應、背景完成撮合、四錢包正確結算
+
+> 實作重點（給接手者）：
+> - `exchange/__init__.py` 要有 `from .celery import app as celery_app`，否則 web 進程 `.delay()` 找不到 app、task 也不註冊。
+> - `send_to_match_market(order_id)` 是 `@shared_task` 薄包裝，內部呼叫純函式 `match_order(order_id)`；**`match_order` 維持純函式**，單元測試直接呼叫它、不碰 Celery。
+> - **Celery + DB 競態**：`.delay()` 是「立刻送訊息到 broker」，與 DB commit 無關。若在 `transaction.atomic()` 內送，worker 可能在 web 交易 commit 前就撈任務 → `get(order_id)` 抓不到。解法：把 `.delay()` 放在 `with transaction.atomic():` 區塊**之外**（commit 後才送）;此寫法只在「該 atomic 是最外層」時等價於 commit 後（ATOMIC_REQUESTS 目前關閉、create 未被巢狀，成立）。更防呆的寫法是 `transaction.on_commit(...)`。
+> - 注意 `with` 要包住 `serializer.is_valid()`，因為 serializer 內用 `select_for_update()` 鎖錢包查餘額，必須在交易內。
+> - 測試：凡是會 POST 下單（觸發 `.delay()`）的測試 class 要掛 `@override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)`，讓 task 在進程內同步跑、不漏送到真 broker（已套：test_orders、test_order_create_matching）。**正式環境絕不可開 eager。**
+> - 坑：`test_orders.py`（M2 寫的）改非同步後會漏送 task，因為當時沒有 eager override;已補上。
+
+## M-撮合補強 — 自我成交防護（STP）　✅ 完成
+- [x] `get_waiting_match_orders` 加 `.exclude(user=order.user)`，taker 不配到自己的單
+- [x] 驗證：同一人掛賣+買且價格交叉 → 不成交、兩單留 PENDING、凍結不動（test_matching.py `SelfTradePreventionTest`）
+
+> 為什麼：自我成交（wash trading）會製造假成交量/假行情，是被禁止的市場操縱，正規交易所一律在撮合層擋掉。本專案採最單純策略：跳過自己的單、留在簿上。
 
 ## M6 — 併發安全　〔規格：04, 02〕
 - [ ] 撮合對訂單/錢包加 `select_for_update`
