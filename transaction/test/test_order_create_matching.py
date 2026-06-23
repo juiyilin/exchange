@@ -16,6 +16,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from currency.models import CurrencyModel, TradingPairModel
@@ -30,6 +31,9 @@ def D(x):
     return Decimal(str(x))
 
 
+# 非同步化後，下單只 .delay() 丟任務。測試環境跑單元測試沒有 worker，
+# 用 ALWAYS_EAGER 讓 send_to_match_market 在當前進程同步執行
+@override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
 class OrderCreateMatchingTest(APITestCase):
     def setUp(self):
         self.seller = User.objects.create(username="seller")

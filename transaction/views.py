@@ -26,22 +26,21 @@ class OrderViewSet(ModelViewSet):
         wallet.frozen_balance += total
         wallet.save()
 
-    @transaction.atomic
     def create(self, request, *args, **kwargs):
         user = get_random_user()
         # user = request.user
-        serializer = OrderCreateUpdateSerializer(data=request.data, context={'user': user})
-        serializer.is_valid(raise_exception=True)
 
-        wallet, required_balance = serializer.context['wallet'], serializer.context['required_balance']
+        with transaction.atomic():
+            serializer = OrderCreateUpdateSerializer(data=request.data, context={'user': user})
+            serializer.is_valid(raise_exception=True)
 
-        self.transfer_to_frozen(wallet, required_balance)
-        order = serializer.save()
-        headers = self.get_success_headers(serializer.data)
-        # celery 送到撮合市場
-        # send_to_match_market.delay(order.id)
+            wallet, required_balance = serializer.context['wallet'], serializer.context['required_balance']
 
-        match_order(order.id)
+            self.transfer_to_frozen(wallet, required_balance)
+            order = serializer.save()
+            headers = self.get_success_headers(serializer.data)
+        # commit 後 celery 才送到撮合市場。如果 with 報錯，後續都不會執行
+        send_to_match_market.delay(order.id)
 
         return Response(
             {"message": "Order created successfully"}, status=status.HTTP_201_CREATED, headers=headers

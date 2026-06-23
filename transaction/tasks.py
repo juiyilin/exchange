@@ -1,3 +1,4 @@
+from celery import shared_task
 from member.models import WalletModel
 
 from .models import OrderModel, TransactionModel
@@ -6,8 +7,9 @@ from django.db import transaction
 from collections import deque
 
 
-def send_to_match_market():
-    pass
+@shared_task
+def send_to_match_market(order_id):
+    match_order(order_id)
 
 def match_order(order_id):
     """

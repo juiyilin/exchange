@@ -22,6 +22,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from currency.models import CurrencyModel, TradingPairModel
@@ -36,6 +37,9 @@ def D(x):
     return Decimal(str(x))
 
 
+# 下單 API 會 .delay() 送撮合任務。測試環境沒 worker，用 ALWAYS_EAGER 讓它
+# 在當前進程同步跑，避免漏送真 task 到 broker（否則 worker 重啟會清出殘留）。
+@override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
 class OrderCreateTest(APITestCase):
     def setUp(self):
         self.user = User.objects.create(username="trader")

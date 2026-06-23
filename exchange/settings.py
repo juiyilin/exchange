@@ -89,7 +89,7 @@ DATABASES = {
         "NAME": env("ENV_DATABASE_NAME", default=""),
         "USER": env("ENV_DATABASE_USER", default="postgres"),
         "PASSWORD": env("ENV_DATABASE_PASSWORD", default=""),
-        # 'ATOMIC_REQUESTS': True,
+        # 'ATOMIC_REQUESTS': True,  # 整個requests都做atomic，但會有顆粒太粗的問題
     }
 }
 
@@ -143,5 +143,5 @@ REST_FRAMEWORK = {
 
 # Celery settings
 # myproject/settings.py
-CELERY_BROKER_URL = env('ENV_CELERY_BROKER_URL', default='redis://localhost:6373/0')  # 告訴 Celery 去哪裡領任務
-CELERY_RESULT_BACKEND = env('ENV_CELERY_RESULT_BACKEND', default='redis://localhost:6373/0')
+CELERY_BROKER_URL = env('ENV_CELERY_BROKER_URL', default='redis://localhost:6379/0')  # 告訴 Celery 去哪裡領任務
+CELERY_RESULT_BACKEND = env('ENV_CELERY_RESULT_BACKEND', default='redis://localhost:6379/0')
