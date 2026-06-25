@@ -42,7 +42,7 @@ class OrderViewSet(ModelViewSet):
             order = serializer.save()
             headers = self.get_success_headers(serializer.data)
         # commit 後 celery 才送到撮合市場。如果 with 報錯，後續都不會執行
-        send_to_match_market.delay(order.id)
+        send_to_match_market.delay(order.id, order.trading_pair.id)
 
         return Response(
             {"message": "Order created successfully"}, status=status.HTTP_201_CREATED, headers=headers
@@ -66,5 +66,5 @@ class OrderViewSet(ModelViewSet):
         instance.status = OrderStatus.CANCELED
         instance.save()
 
-        WalletModel.objects.select_for_update().release_frozen(instance)
+        WalletModel.objects.release_frozen(instance)
         return Response({"message": "Order canceled successfully"})

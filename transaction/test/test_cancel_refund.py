@@ -156,7 +156,7 @@ class CancelPartiallyFilledTest(CancelRefundBaseTestCase):
 
         self.place(self.alice, OrderType.SELL, "0.4", 30000)   # maker，先掛
         buy = self.place(self.bob, OrderType.BUY, 1, 30000)    # taker
-        match_order(buy.pk)
+        match_order(buy.pk, buy.trading_pair.id)
 
         buy.refresh_from_db()
         self.assertEqual(buy.status, OrderStatus.PARTIALLY_FILLED)
@@ -189,7 +189,7 @@ class OverFreezeRefundOnFullFillTest(CancelRefundBaseTestCase):
 
         self.place(self.alice, OrderType.SELL, 1, 29000)   # maker，較早
         buy = self.place(self.bob, OrderType.BUY, 1, 30000)  # taker
-        match_order(buy.pk)
+        match_order(buy.pk, buy.trading_pair.id)
 
         buy.refresh_from_db()
         self.assertEqual(buy.status, OrderStatus.FULLY_FILLED)
@@ -226,7 +226,7 @@ class OverFreezeTakerThenMakerTest(CancelRefundBaseTestCase):
         # 第一步：alice 便宜賣 maker，bob 買 taker 部分成交
         self.place(self.alice, OrderType.SELL, "0.5", 29000)
         buy = self.place(self.bob, OrderType.BUY, 1, 31000)
-        match_order(buy.pk)
+        match_order(buy.pk, buy.trading_pair.id)
 
         buy.refresh_from_db()
         self.assertEqual(buy.status, OrderStatus.PARTIALLY_FILLED)
@@ -235,7 +235,7 @@ class OverFreezeTakerThenMakerTest(CancelRefundBaseTestCase):
 
         # 第二步：carol 賣 taker，吃掉 bob 剩餘 → bob 變 maker 並 FULLY_FILLED
         sell = self.place(carol, OrderType.SELL, "0.5", 30000)
-        match_order(sell.pk)
+        match_order(sell.pk, sell.trading_pair.id)
 
         buy.refresh_from_db()
         self.assertEqual(buy.status, OrderStatus.FULLY_FILLED)
@@ -258,7 +258,7 @@ class CancelTerminalRejectedTest(CancelRefundBaseTestCase):
 
         self.place(self.alice, OrderType.SELL, 1, 30000)
         buy = self.place(self.bob, OrderType.BUY, 1, 30000)
-        match_order(buy.pk)
+        match_order(buy.pk, buy.trading_pair.id)
         buy.refresh_from_db()
         self.assertEqual(buy.status, OrderStatus.FULLY_FILLED)
 

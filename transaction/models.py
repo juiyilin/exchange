@@ -82,8 +82,10 @@ class OrderModel(BaseTimeModel):
         """修改吃單者(taker)的狀態"""
         if remaining <= 0:
             self.status = OrderStatus.FULLY_FILLED
-        else:
+        elif remaining < self.quantity:
             self.status = OrderStatus.PARTIALLY_FILLED
+        else:  # remaining == quantity：一筆都沒撮到
+            self.status = OrderStatus.PENDING
         self.save()
 
     def get_current_frozen(self):

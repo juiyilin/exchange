@@ -33,7 +33,11 @@ class UserProfileModel(BaseTimeModel):
             secret = self.decrypt_totp_secret()
         else: 
             secret = pyotp.random_base32()
-        pyotp.totp.TOTP(secret).provisioning_uri(name=self.user.username, issuer_name=ISSUER)
+        return pyotp.totp.TOTP(secret).provisioning_uri(name=self.user.username, issuer_name=ISSUER)
+
+    def get_current_totp(self):
+        self.decrypt_totp_secret()
+        return pyotp.TOTP(self.decrypt_totp_secret()).now()
 
 
 class WalletQuerySet(models.QuerySet):
@@ -61,11 +65,12 @@ class WalletQuerySet(models.QuerySet):
         if order.status in [OrderStatus.FULLY_FILLED, OrderStatus.CANCELED]:
             current_frozen = order.get_current_frozen()
             asset_type = order.get_asset_type()
-            wallet = self.get(user=order.user, asset_type=asset_type)
-            wallet.frozen_balance -= current_frozen
-            wallet.available_balance += current_frozen
-            wallet.save()
-
+            self.filter(
+                    user=order.user, asset_type=asset_type
+                ).update(
+                    frozen_balance=F('frozen_balance') - current_frozen,
+                    available_balance=F('available_balance') + current_frozen
+                )
 
 
 class WalletManager(models.Manager.from_queryset(WalletQuerySet)):
@@ -90,3 +95,7 @@ class WalletModel(BaseTimeModel):
         verbose_name = "錢包"
         verbose_name_plural = "錢包"
         unique_together = ("user", "asset_type")
+        constraints = [
+            models.CheckConstraint(condition=models.Q(available_balance__gte=0), name="available_non_negative"),
+            models.CheckConstraint(condition=models.Q(frozen_balance__gte=0), name="frozen_non_negative"),
+        ]
