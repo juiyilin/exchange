@@ -15,7 +15,7 @@
 
 ---
 
-## 目前進度（最後更新：M5 非同步化 + 自我成交防護完成）
+## 目前進度（最後更新：M7 完成 — JWT + 強制 TOTP 2FA + 註冊;54 測試綠）
 
 **節奏原則：先把「基本」功能全部做完，再進入「進階」。**（基本/進階的分類見 `00_overall_spec.md` 第 5 節功能總表）
 
@@ -128,10 +128,44 @@
 - [ ] 餘額不變量檢查（不可變負）
 - [ ] 併發壓力測試：大量對手單不超賣、不重複成交
 
-## M7 — 認證（補技術債）　〔規格：02〕
-- [ ] 註冊 / 登入 / Token 驗證
-- [ ] 移除 `get_random_user_id`，所有操作綁 `request.user`
-- [ ] 權限：只能操作自己的錢包/訂單
+## M7 — 認證（補技術債）　〔規格：02〕　✅ 完成（JWT + 強制 TOTP 2FA + 註冊;54 測試綠）
+
+### A 階段：基礎認證（JWT, simplejwt）
+- [x] 設定 JWT：`djangorestframework-simplejwt`、REST_FRAMEWORK 設 JWTAuthentication + 全域 IsAuthenticated
+- [x] 登入端點：`POST /api/user/login/`（TokenObtainPairView）、`/token/refresh/`（TokenRefreshView）
+- [x] 移除 `get_random_user`，三處（下單、建錢包、出金）改綁 `request.user`
+- [x] 權限：`get_queryset` 過濾 `request.user`（staff 看全部）;cancel 綁 `user=request.user`（別人取消→400）
+- [x] 測試改帶認證：所有 API 測試改 `force_authenticate`（移除 get_random_user 的 mock）;新增「未登入→401」「別人不能取消你的單」
+- [~] 註冊豁免：延到 M-KYC 一起做（屆時 `UserViewSet.create` 設 `AllowAny`、順帶建初始錢包）。在那之前新用戶用 admin/shell 建立。
+
+### B 階段：2FA（TOTP）— ✅ 完成（強制全員 2FA）
+- [x] 啟用 2FA 端點：`PUT /api/user/register/`，輸入一次正確 TOTP 碼才把 two_factor_enabled 設 True
+- [x] 註冊端點：`POST /api/user/register/`（免登入），建 User+Profile、產生密鑰、回 secret + otpauth QR 連結
+- [x] 登入加第二因素：`LoginSerializer`(subclass TokenObtainPairSerializer)，帳密過後驗 TOTP 才發 JWT
+- [x] 密鑰加密儲存：`encrypted_totp_secret`(BinaryField) 用 Fernet 加密;設定 FERNET_KEY、ISSUER
+- [x] 測試：`member/test/test_2fa.py`（8 條，pyotp 自算碼）;全套 54 條綠
+
+> 實作重點 / 踩過的坑：
+> - **強制 2FA**：LoginSerializer 採「未啟用 2FA 就不准登入」。代價是 superuser（無 profile）走 JWT login 會炸 → 已用 `getattr(user, 'profile', None)` 擋。
+> - **valid_window=1**：verify_totp 一定要設，容忍 ±30 秒時鐘誤差;不設（預設 0）會讓 2FA 測試跨 30 秒邊界時間歇性失敗。
+> - 既有 `force_authenticate` 測試不受強制 2FA 影響（直接設 request.user、不走 login serializer）。
+> - 註冊豁免在這裡一併做掉了（RegisterView authentication_classes/permission_classes=[]）;M-KYC 只剩「KYC 欄位/審核/風險閘門」。
+
+## M-身份組與權限（RBAC）【進階】　〔規格：02 §6.5〕　待做
+- [ ] 用 Django Group 分角色（如 trader / support / admin）
+- [ ] 對需要的 ViewSet 掛 `DjangoModelPermissions`（HTTP 方法↔model 權限）或自訂 permission 檢查 `request.user.groups`
+- [ ] 全域維持 IsAuthenticated 當地板，個別 view 用 permission_classes 覆寫疊角色判斷
+- [ ] 釐清「角色層（能做哪種 CRUD）」與「擁有權層（只能碰自己的）」兩維度一起生效
+- [ ] 驗證：不同角色帳號對同一端點的 CRUD 權限符合預期
+
+## M-KYC（身份驗證 + 註冊上線流程）【進階】　〔規格：02〕　待做
+> 註冊流程與 KYC 一起做，避免改兩次。M7-A 暫時把註冊豁免延到這裡。
+- [x] 註冊 API（免登入 RegisterView，建 User + Profile + TOTP 密鑰）— M7-B 已做
+- [ ] 註冊時順帶建初始錢包（USDT/BTC）;list/retrieve 限 IsAdminUser
+- [ ] KYC 欄位/狀態：身分證件、法定姓名、地址證明等;狀態機 unverified → pending → approved / rejected
+- [ ] 文件上傳與審核流程（送審、人工/自動審核、結果回寫）
+- [ ] 風險閘門：未通過 KYC 限制敏感操作（如出金、額度上限）
+- [ ] 驗證：未驗證用戶被擋在受限操作之外;通過後解鎖
 
 ## M-日誌與帳本【進階】　〔規格：07〕
 - [ ] `LedgerEntry`：每次餘額變動（凍結/解凍/結算/退款/入出金/手續費）寫一筆 append-only 紀錄，與餘額變動同一 atomic

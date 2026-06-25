@@ -127,7 +127,8 @@ member  ←─── transaction(下單要檢查並凍結錢包餘額)
 - 【基本】建立用戶、用戶個人資料
 - 【基本】錢包：每人每幣一個，含可用餘額/凍結餘額
 - 【基本】查詢自己的錢包餘額
-- 【進階】真實認證（取代目前的「隨機指派用戶」）：註冊、登入、Token 驗證
+- 【進階】真實認證（取代目前的「隨機指派用戶」）：註冊、登入、JWT 驗證、2FA(TOTP)
+- 【進階】身份組與權限（Role-Based Access Control, RBAC）：用 Django Group 分角色，依角色決定誰能對哪些資源做 CRUD
 - 【進階】帳本流水（ledger entry）：每筆餘額變動都留一筆不可刪的紀錄
 
 ### 訂單（transaction / order）
@@ -175,14 +176,14 @@ member  ←─── transaction(下單要檢查並凍結錢包餘額)
 
 ## 7. 文件導覽
 
-| 檔案                          | 內容                          |
-| ----------------------------- | ----------------------------- |
-| `00_overall_spec.md`          | （本檔）整體地圖              |
-| `01_currency_spec.md`         | 幣別與交易對                  |
-| `02_member_wallet_spec.md`    | 用戶、個人資料、錢包帳本      |
-| `03_order_spec.md`            | 訂單模型、下單流程、狀態機    |
-| `04_matching_engine_spec.md`  | 撮合引擎演算法                |
-| `05_settlement_spec.md`       | 成交結算與餘額不變量          |
-| `06_deposit_withdraw_spec.md` | 入金/出金（模擬，預留測試鏈） |
+| 檔案                          | 內容                                                       |
+| ----------------------------- | ---------------------------------------------------------- |
+| `00_overall_spec.md`          | （本檔）整體地圖                                           |
+| `01_currency_spec.md`         | 幣別與交易對                                               |
+| `02_member_wallet_spec.md`    | 用戶、個人資料、錢包帳本                                   |
+| `03_order_spec.md`            | 訂單模型、下單流程、狀態機                                 |
+| `04_matching_engine_spec.md`  | 撮合引擎演算法                                             |
+| `05_settlement_spec.md`       | 成交結算與餘額不變量                                       |
+| `06_deposit_withdraw_spec.md` | 入金/出金（模擬，預留測試鏈）                              |
 | `07_logging_audit_spec.md`    | 日誌與帳本（LedgerEntry / 入出金紀錄，設計定案、實作延後） |
-| `TASKS.md`                    | 可接手的分階段待辦清單        |
+| `TASKS.md`                    | 可接手的分階段待辦清單                                     |

@@ -89,6 +89,27 @@
 ### 6.4 精度
 `decimal_places=2` 對 BTC 不夠，配合 `01_currency_spec.md` 的精度設計一起調整。
 
+### 6.5 身份組與權限（RBAC）
+
+認證解決「你是誰」，授權（權限）解決「你能做什麼」。這兩件事是分層的，不要混在一起：
+
+- **認證層（M7 已做）**：JWT 認出 `request.user`，全域 `IsAuthenticated` 當地板（最低門檻：要登入）。
+- **物件層擁有權（M7 已做）**：用 `get_queryset` 過濾 `request.user`、cancel 綁 `user=request.user`，保證「只能碰自己的資料」。這是「對哪一筆」的維度。
+- **角色層 RBAC（本節，待做）**：用 Django 內建的 **Group（身份組）** 把使用者分角色，依角色決定「能不能做某類 CRUD」。這是「能做哪種操作」的維度。
+
+兩個維度是正交的、要一起用才完整：RBAC 管「能不能下單/能不能看全站訂單」，擁有權管「只能取消自己的單」。
+
+實作方向（建議用 Django 既有機制，不要自己造）：
+
+- Django 每個 model 自動有 `view / add / change / delete` 四種權限，可指派給不同 Group。
+- DRF 的 `DjangoModelPermissions` 會把 HTTP 方法對應到這些權限（GET→view、POST→add、PUT/PATCH→change、DELETE→delete）。把它掛在特定 ViewSet 的 `permission_classes`，就是「依身份組決定誰能 CRUD」。
+- 全域預設仍維持 `IsAuthenticated`;個別 view 用 `permission_classes` 覆寫，疊上角色判斷（`DjangoModelPermissions` 或自訂 `permission`，例如檢查 `request.user.groups`）。
+- 需要更細的「同一 model、不同角色看不同欄位／不同物件」時，再寫自訂 `BasePermission` 或物件層 `has_object_permission`。
+
+設想的角色舉例（依專案需要調整）：一般交易者（trader）只能 CRUD 自己的訂單/錢包;客服（support）可唯讀查詢用戶資料;風控/管理（admin/staff）可跨用戶查詢與凍結。
+
+> 注意：目前 `UserViewSet.create`（註冊）需在全域 `IsAuthenticated` 下豁免成 `AllowAny`，否則新用戶無法註冊（死鎖）;list/retrieve 列出全站用戶應限 `IsAdminUser`。這條在 RBAC 落地時一起處理。
+
 ## 7. 常見坑
 
 - **餘額更新沒有原子性**：「讀餘額→改→存」這三步，如果兩個請求同時跑，會互相覆蓋（race condition），導致超賣。下單那段已經用了 `select_for_update()`，所有改餘額的地方都要這樣鎖。詳見 `04_matching_engine_spec.md` 的併發章節。
