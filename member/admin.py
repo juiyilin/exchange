@@ -21,16 +21,16 @@ class UserAdmin(BaseUserAdmin):
 
     @admin.display(description="電話號碼")
     def phone_number(self, obj):
-        profile = getattr(obj, "userprofilemodel", None)
+        profile = getattr(obj, "profile", None)
         return profile.phone_number if profile else ""
 
     @admin.display(description="地址")
     def address(self, obj):
-        profile = getattr(obj, "userprofilemodel", None)
+        profile = getattr(obj, "profile", None)
         return profile.address if profile else ""
 
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related("userprofilemodel")
+        return super().get_queryset(request).select_related("profile")
 
 
 @admin.register(WalletModel)

@@ -21,13 +21,16 @@ environ.Env.read_env()
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
+
+ISSUER = env('ENV_ISSUER', default='EXCHANGE_TEST')
+
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-w%7#s1%sha#yro^&l(13g+)sg+8vn2hq)y#fw@ew=&gbsmbs*r"
+SECRET_KEY = env('ENV_SECRET_KEY')
+FERNET_KEY = env('ENV_FERNET_KEY').encode()
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
-ALLOWED_HOSTS = []
+DEBUG = env('ENV_DEBUG', default=False)
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
@@ -40,6 +43,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "django_celery_results",
     "currency",
     "member",
     "transaction",
@@ -138,10 +142,19 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # Django rest framework settings
 REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "drf_standardized_errors.handler.exception_handler",
-    'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend']
+    'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend'],
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'rest_framework.authentication.SessionAuthentication',  # admin / browsable 方便
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
 }
 
 # Celery settings
 # myproject/settings.py
 CELERY_BROKER_URL = env('ENV_CELERY_BROKER_URL', default='redis://localhost:6379/0')  # 告訴 Celery 去哪裡領任務
-CELERY_RESULT_BACKEND = env('ENV_CELERY_RESULT_BACKEND', default='redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = "django-db"
+# celery 儲存結果的過期時間 默認1天過期 如設為0則永不過期
+CELERY_TASK_RESULT_EXPIRES = 60 * 60 * 24

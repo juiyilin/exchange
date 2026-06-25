@@ -8,12 +8,11 @@ test_orders.py 已驗證「下單→凍結」那半邊；這支補另一半：
 這支同時驗證 transfer_asset 的 get_or_create：賣方一開始沒有 USDT 錢包、
 買方一開始沒有 BTC 錢包，成交後這兩個收款錢包應被自動建立並入帳。
 
-使用者：create() 用 get_random_user() 決定下單者。這裡用 mock 的 side_effect
-讓「第一次 POST=賣方、第二次 POST=買方」，避免自我成交、且結果可預測。
+使用者：M7 後 create() 用 request.user 決定下單者。這裡在兩次 POST 之間切換
+force_authenticate（先賣方、再買方），避免自我成交、且結果可預測。
 """
 
 from decimal import Decimal
-from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.test import override_settings
@@ -61,14 +60,16 @@ class OrderCreateMatchingTest(APITestCase):
 
     def _post_sell_then_buy(self, sell_qty, sell_price, buy_qty, buy_price):
         """先掛賣（maker），再掛買（taker）。回傳兩個 response。"""
-        with patch("transaction.views.get_random_user") as mock_user:
-            mock_user.side_effect = [self.seller, self.buyer]
-            sell_resp = self.client.post(
-                ORDER_URL, self._payload(OrderType.SELL, sell_qty, sell_price), format="json"
-            )
-            buy_resp = self.client.post(
-                ORDER_URL, self._payload(OrderType.BUY, buy_qty, buy_price), format="json"
-            )
+        # 先以賣方身分掛賣單
+        self.client.force_authenticate(user=self.seller)
+        sell_resp = self.client.post(
+            ORDER_URL, self._payload(OrderType.SELL, sell_qty, sell_price), format="json"
+        )
+        # 再切換成買方身分掛買單（不同人，避免自我成交防護擋掉）
+        self.client.force_authenticate(user=self.buyer)
+        buy_resp = self.client.post(
+            ORDER_URL, self._payload(OrderType.BUY, buy_qty, buy_price), format="json"
+        )
         return sell_resp, buy_resp
 
     # ---------- 測試 ----------

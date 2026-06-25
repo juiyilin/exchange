@@ -97,7 +97,10 @@ class CancelRefundBaseTestCase(APITestCase):
             kwargs["ordered_at"] = ordered_at
         return OrderModel.objects.create(**kwargs)
 
-    def cancel(self, order):
+    def cancel(self, order, as_user=None):
+        # 全域 IsAuthenticated + cancel 綁擁有者：預設以該單擁有者身分取消，
+        # 傳 as_user 可模擬「別人來取消」。
+        self.client.force_authenticate(user=as_user or order.user)
         return self.client.post(f"{ORDER_URL}{order.pk}/cancel/", format="json")
 
 
@@ -285,6 +288,18 @@ class CancelTerminalRejectedTest(CancelRefundBaseTestCase):
         self.assertEqual(self.get_wallet(self.bob, self.usdt).available_balance, D(100000))
         self.assertEqual(self.get_wallet(self.bob, self.usdt).frozen_balance, D(0))
 
+    def test_other_user_cannot_cancel(self):
+        """別人不能取消你的單 → 400（綁 user，看不到當作不存在）、不退款、狀態不變。"""
+        self.wallet(self.bob, self.usdt, "100000")
+        buy = self.place(self.bob, OrderType.BUY, 1, 30000)
+
+        resp = self.cancel(buy, as_user=self.alice)  # alice 想取消 bob 的單
+
+        self.assertEqual(resp.status_code, 400)
+        buy.refresh_from_db()
+        self.assertEqual(buy.status, OrderStatus.PENDING)
+        self.assertEqual(self.get_wallet(self.bob, self.usdt).frozen_balance, D(30000))
+
 
 # ============================================================================
 # (3) 擋改單
@@ -304,11 +319,13 @@ class BlockUpdateTest(CancelRefundBaseTestCase):
     def test_put_not_allowed(self):
         self.wallet(self.bob, self.usdt, "100000")
         buy = self.place(self.bob, OrderType.BUY, 1, 30000)
+        self.client.force_authenticate(user=self.bob)  # 先登入，否則回 401 而非 405
         resp = self.client.put(self._detail_url(buy), self._payload(), format="json")
         self.assertEqual(resp.status_code, 405)
 
     def test_patch_not_allowed(self):
         self.wallet(self.bob, self.usdt, "100000")
         buy = self.place(self.bob, OrderType.BUY, 1, 30000)
+        self.client.force_authenticate(user=self.bob)
         resp = self.client.patch(self._detail_url(buy), {"quantity": "999"}, format="json")
         self.assertEqual(resp.status_code, 405)

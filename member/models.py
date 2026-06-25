@@ -1,23 +1,39 @@
 from django.contrib.auth.models import User
 from django.db import models
 from django.db.models import F
+import pyotp
 from common.models import BaseTimeModel
 from currency.models import CurrencyModel
 from transaction.constants import OrderStatus
+from cryptography.fernet import Fernet
+from exchange.settings import FERNET_KEY, ISSUER
 
 
 class UserProfileModel(BaseTimeModel):
-    user = models.OneToOneField(User, on_delete=models.CASCADE)
-    phone_number = models.CharField(
-        max_length=20, blank=True, default="", verbose_name="電話號碼"
-    )
-    address = models.CharField(
-        max_length=255, blank=True, default="", verbose_name="地址"
-    )
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
+    phone_number = models.CharField(max_length=20, blank=True, default="", verbose_name="電話號碼")
+    address = models.CharField(max_length=255, blank=True, default="", verbose_name="地址")
+
+    # 2fa
+    two_factor_enabled = models.BooleanField(default=False, verbose_name='是否啟用2fa')
+    encrypted_totp_secret = models.BinaryField(default=b'', verbose_name="加密後的TOTP金鑰")
 
     class Meta:
         verbose_name = "用戶其他資料"
         verbose_name_plural = "用戶其他資料"
+
+    def decrypt_totp_secret(self):
+        """回傳原本的TOTP金鑰"""
+        fernet = Fernet(FERNET_KEY)
+        totp_secret = fernet.decrypt(self.encrypted_totp_secret).decode()
+        return totp_secret
+
+    def get_secret_qrcode_link(self):
+        if self.encrypted_totp_secret:
+            secret = self.decrypt_totp_secret()
+        else: 
+            secret = pyotp.random_base32()
+        pyotp.totp.TOTP(secret).provisioning_uri(name=self.user.username, issuer_name=ISSUER)
 
 
 class WalletQuerySet(models.QuerySet):

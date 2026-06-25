@@ -5,10 +5,7 @@ from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
-
-from common.func import get_random_user
-from transaction.tasks import send_to_match_market, match_order
-
+from transaction.tasks import send_to_match_market
 from .constants import OrderStatus
 from .models import OrderModel
 from .serializers import OrderCreateUpdateSerializer, OrderSerializer
@@ -21,14 +18,19 @@ class OrderViewSet(ModelViewSet):
     filterset_fields = ['status']
     http_method_names = ['get', 'post']
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.request.user.is_staff:
+            return queryset
+        return queryset.filter(user=self.request.user)
+
     def transfer_to_frozen(self, wallet, total):
         wallet.available_balance -= total
         wallet.frozen_balance += total
         wallet.save()
 
     def create(self, request, *args, **kwargs):
-        user = get_random_user()
-        # user = request.user
+        user = request.user
 
         with transaction.atomic():
             serializer = OrderCreateUpdateSerializer(data=request.data, context={'user': user})
@@ -55,9 +57,9 @@ class OrderViewSet(ModelViewSet):
         2. 把單子改成已取消後，處理多餘的凍結餘額
         """
         try:
-            instance = OrderModel.objects.select_for_update().get(id=pk)
+            instance = OrderModel.objects.select_for_update().get(id=pk, user=request.user)
         except OrderModel.DoesNotExist:
-            raise serializers.ValidationError('')
+            raise serializers.ValidationError('該單不存在')
         if instance.status in [OrderStatus.FULLY_FILLED, OrderStatus.CANCELED]:
             raise serializers.ValidationError(f'本單{instance.get_status_display()}，無法取消')
 
