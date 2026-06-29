@@ -90,24 +90,35 @@
 
 專案已經分好四個 app，這個結構很合理，我們沿用：
 
-| App           | 職責                     | 主要 Model                        | 細部規格文件                                                              |
-| ------------- | ------------------------ | --------------------------------- | ------------------------------------------------------------------------- |
-| `common`      | 共用基底與工具           | `BaseTimeModel`（建立/更新時間）  | （無，跨模組共用）                                                        |
-| `currency`    | 幣別與交易對             | `CurrencyModel`                   | `01_currency_spec.md`                                                     |
-| `member`      | 用戶、個人資料、錢包帳本 | `UserProfileModel`、`WalletModel` | `02_member_wallet_spec.md`                                                |
-| `transaction` | 訂單、撮合、成交         | `OrderModel`、`TransactionModel`  | `03_order_spec.md`、`04_matching_engine_spec.md`、`05_settlement_spec.md` |
+| App           | 職責                         | 主要 Model                                 | 細部規格文件                                                              |
+| ------------- | ---------------------------- | ------------------------------------------ | ------------------------------------------------------------------------- |
+| `common`      | 共用基底與工具               | `BaseTimeModel`（建立/更新時間）           | （無，跨模組共用）                                                        |
+| `currency`    | 幣別與交易對                 | `CurrencyModel`                            | `01_currency_spec.md`                                                     |
+| `ledger`      | 帳本流水、入出金紀錄（稽核） | `LedgerEntryModel`、`DepositWithdrawModel` | `07_logging_audit_spec.md`                                                |
+| `member`      | 用戶、個人資料、錢包帳本     | `UserProfileModel`、`WalletModel`          | `02_member_wallet_spec.md`                                                |
+| `transaction` | 訂單、撮合、成交             | `OrderModel`、`TransactionModel`           | `03_order_spec.md`、`04_matching_engine_spec.md`、`05_settlement_spec.md` |
 
-入金/出金目前散在 `member`，文件上獨立成 `06_deposit_withdraw_spec.md`，未來可能抽成自己的 app。
+`ledger` 是後加的稽核層（M-日誌與帳本）：每次錢包餘額變動都在同一個 atomic 內補寫一筆不可變的 `LedgerEntryModel`。
+入金/出金的業務紀錄 `DepositWithdrawModel` 也收在這裡（原規劃在 `member`，見 `07` 的架構決策）。
 
 ### 模組相依關係
 
 ```
 common  ←─── 所有人都依賴它（時間戳記、工具函式）
-currency ←── member(錢包要指定幣別)、transaction(訂單要指定幣別)
+currency ←── ledger / member / transaction 都要指定幣別
+ledger  ←─── member、transaction 在業務函式裡寫帳本流水（import LedgerEntryModel）
 member  ←─── transaction(下單要檢查並凍結錢包餘額)
 ```
 
-依賴方向是單向的（transaction 依賴 member，member 不依賴 transaction），這很重要——避免循環依賴。
+依賴方向是單向的，這很重要——避免循環依賴。完整層次：
+
+```
+common ← currency ← ledger ← member ← transaction
+```
+
+> `ledger` 能插進 `currency` 與 `member` 之間，是因為它**只**向下依賴 `currency`（`LedgerEntryModel.asset_type` FK 到 `CurrencyModel`），
+> 而且對訂單/成交只用「軟參照」(字串 `ref_type`/`ref_id`)、不做 FK。一旦它反過來 FK 到 `WalletModel` 或 `OrderModel`，
+> 就會和 `member`/`transaction` 互相依賴形成環。細節見 `07_logging_audit_spec.md` §3.1。
 
 ---
 

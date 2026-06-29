@@ -15,7 +15,7 @@
 
 ---
 
-## 目前進度（最後更新：M6 完成 — 併發安全：交易對序列化鎖 + 冪等撮合 + 餘額 CheckConstraint;併發測試綠）
+## 目前進度（最後更新：M-日誌與帳本 核心完成 — LedgerEntryModel + 四套用點記帳 + 對帳不變量測試全綠;剩 DepositWithdrawModel 之後做）
 
 **節奏原則：先把「基本」功能全部做完，再進入「進階」。**（基本/進階的分類見 `00_overall_spec.md` 第 5 節功能總表）
 
@@ -142,6 +142,7 @@
 - [x] 併發壓力測試：`transaction/test/test_concurrency.py`（no-oversell、cross-fire 雙向、match/cancel 退款 race）
 
 > 實作重點 / 踩過的坑（給接手者）：
+>
 > - **deadlock 是真的**：只鎖訂單時，買賣兩邊同時撮合會「先鎖自己的單、再搶對手單」互鎖成環，PostgreSQL 報 `deadlock detected`。解法是**進撮合前先鎖交易對列**（序列化閘門），且**必須在鎖任何訂單之前**，順序反了就無效。不同交易對仍平行。
 > - **冪等性**：`match_order` 要能被重複呼叫不出錯（Celery at-least-once 會重送；一張單可能在自己任務跑前就被別張當 maker 吃掉成終態）。作法：`.get(id=..., status__in=[PENDING, PARTIALLY_FILLED])` 撈不到即 return；`taker_remaining` 用 `waiting_transaction_quantity()` 不用 `quantity`。
 > - **`release_frozen` 從讀改寫改成 F()**：原本 `wallet.x -= n; wallet.save()` 在併發退款（撮合與 cancel 同時碰同一錢包）會掉更新；`F()` 是 DB 端相對運算，免鎖也不掉。`transfer_asset` 本來就用 F()，安全。
@@ -195,13 +196,36 @@
 - [ ] 風險閘門：未通過 KYC 限制敏感操作（如出金、額度上限）
 - [ ] 驗證：未驗證用戶被擋在受限操作之外;通過後解鎖
 
-## M-日誌與帳本【進階】　〔規格：07〕
+## M-日誌與帳本【進階】　〔規格：07〕　✅ 核心完成（測試全綠;剩 DepositWithdrawModel）
 
-- [ ] `LedgerEntry`：每次餘額變動（凍結/解凍/結算/退款/入出金/手續費）寫一筆 append-only 紀錄，與餘額變動同一 atomic
-- [ ] 在各業務函式顯式寫入（不要用 signal）：下單凍結、撮合結算、取消/退款、入金、出金
-- [ ] `DepositWithdrawModel`：入出金業務紀錄（status、tx_hash/address，範圍 1 留空）
-- [ ] 對帳：錢包餘額 == 該錢包所有 ledger delta 總和
-- [ ] 注意：設計已定案於 `07_logging_audit_spec.md`；基本階段不做，這裡是延後實作的依據
+**架構決策**：`LedgerEntryModel` 與 `DepositWithdrawModel` 獨立成新的 **`ledger` app**（原規劃在 member）。
+唯一前提：`ledger` 只向下依賴 `currency`，`asset_type` FK 到 `CurrencyModel`（不 FK wallet）、
+`ref_type/ref_id` 用軟參照字串（不 FK Order/Transaction），否則循環依賴。層次：
+`common ← currency ← ledger ← member ← transaction`。詳見 `07` §3.1 與 `00` 依賴圖。
+
+已由 Claude 完成（規格/文件/測試）：
+
+- [x] 更新 `07_logging_audit_spec.md`（ledger app、軟參照、套用點對照現有函式、F() 取 balance_after 的坑、實作 checklist §6.2）
+- [x] 更新 `00_overall_spec.md`（模組表 + 依賴圖加入 ledger）
+- [x] 建立 `ledger/` 骨架（apps.py / migrations / test / models.py 規格 docstring）
+- [x] 寫測試 `ledger/test/test_ledger.py`：model append-only 契約、各套用點（FREEZE/SETTLE/UNFREEZE/REFUND/WITHDRAW）、**對帳不變量端到端**
+
+使用者實作（已完成，測試全綠）：
+
+- [x] `ledger/models.py` 寫 `LedgerEntryModel`（append-only：save() 擋更新、delete() raise）
+- [x] `INSTALLED_APPS` 加 `"ledger"`，`makemigrations ledger && migrate`
+- [x] 在四個業務函式內補寫 `LedgerEntryModel`（同 atomic）：
+      `transfer_to_frozen`(FREEZE)、`transfer_asset`(SETTLE，四筆靠 balance_field+正負分收付)、`release_frozen`(UNFREEZE/REFUND 依 order.status)、`withdraw`(WITHDRAW)
+- [x] `ledger/test/test_ledger.py` 全綠（model 契約、各套用點、對帳不變量）
+
+> 踩過的坑（給接手者）：`transfer_asset` 的 `balance_after` 要用「update 後重新讀到的值直接用」，
+> 不可再 ± delta（會重複扣）；且抓付款腿錢包時別把 `user=seller` 寫成 `user=buyer`（曾導致
+> SETTLE 的 balance_after 抓到錯人的錢包而對帳失敗）。
+
+剩餘（之後做）：
+
+- [ ] `DepositWithdrawModel`（07 §4）：建 model 後，把 `withdraw` 的 `ref_type` 從 `manual` 改成 `deposit_withdraw`、`ref_id` 指向該筆;入金也接上記帳路徑（DEPOSIT）
+- [ ] （選做進階）`TRADING_FEE` 手續費、manual 細分 reason（ADMIN_ADJUST/COMPENSATION/CORRECTION）+ `memo`/`operator` 欄位，見 07 §3.2
 
 ## M8（升級到範圍 2）— 測試鏈入金/出金　〔規格：06〕
 
