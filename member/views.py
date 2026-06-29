@@ -9,6 +9,7 @@ from rest_framework import serializers
 from .models import WalletModel, UserProfileModel
 from .serializers import LoginSerializer, RegisterSerializer, TwoFactorEnableSerializer, UserListSerializer, WalletSerializer, WithdrawSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
+from ledger.models import LedgerEntryModel
 
 
 class RegisterView(CreateModelMixin, UpdateModelMixin, GenericViewSet):
@@ -75,4 +76,5 @@ class WalletViewSet(ModelViewSet):
             raise serializers.ValidationError('餘額不足')
         wallet.available_balance -= serializer.validated_data['quantity']
         wallet.save()
+        LedgerEntryModel.objects.create_withdraw_ledgers(wallet, serializer.validated_data['quantity'])
         return Response(WalletSerializer(wallet).data)

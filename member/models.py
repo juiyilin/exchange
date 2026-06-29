@@ -4,6 +4,7 @@ from django.db.models import F
 import pyotp
 from common.models import BaseTimeModel
 from currency.models import CurrencyModel
+from ledger.models import LedgerEntryModel
 from transaction.constants import OrderStatus
 from cryptography.fernet import Fernet
 from exchange.settings import FERNET_KEY, ISSUER
@@ -42,6 +43,7 @@ class UserProfileModel(BaseTimeModel):
 
 class WalletQuerySet(models.QuerySet):
     def transfer_asset(self, transaction):
+        """成交後的資產移轉"""
         buyer = transaction.buy_order.user
         seller = transaction.sell_order.user
         trading_pair = transaction.buy_order.trading_pair
@@ -50,15 +52,26 @@ class WalletQuerySet(models.QuerySet):
         total_amount = transaction.price * transaction.quantity
 
 
-        # buyer 取得買到的幣，付出本次交易的幣
-        self.get_or_create(user=buyer, asset_type=base_currency)
+        # buyer 取得買到的幣，付出計價的幣
+        buyer_base_wallet, _ = self.get_or_create(user=buyer, asset_type=base_currency)
         self.filter(user=buyer, asset_type=base_currency).update(available_balance=F('available_balance') + transaction.quantity)
         self.filter(user=buyer, asset_type=quote_currency).update(frozen_balance=F('frozen_balance') - total_amount)
 
-        # seller 取得本次交易的幣，付出賣出的幣
-        self.get_or_create(user=seller, asset_type=quote_currency)
+        # seller 付出賣出的幣，取得計價的幣
+        seller_quote_wallet, _ = self.get_or_create(user=seller, asset_type=quote_currency)
         self.filter(user=seller, asset_type=base_currency).update(frozen_balance=F('frozen_balance') - transaction.quantity)
         self.filter(user=seller, asset_type=quote_currency).update(available_balance=F('available_balance') + total_amount)
+
+        # 取得各錢包的最新資料
+        buyer_quote_wallet = self.get(user=buyer, asset_type=quote_currency)
+        seller_base_wallet = self.get(user=seller, asset_type=base_currency)
+
+        for wallet in [buyer_base_wallet, seller_quote_wallet]:
+            wallet.refresh_from_db()
+
+        LedgerEntryModel.objects.create_transaction_ledgers(transaction.quantity, total_amount, transaction,
+                                                            buyer_base_wallet, buyer_quote_wallet,
+                                                            seller_base_wallet, seller_quote_wallet)
 
     def release_frozen(self, order):
         """取消 或 全部成交 後要處理多餘的凍結"""
@@ -71,6 +84,8 @@ class WalletQuerySet(models.QuerySet):
                     frozen_balance=F('frozen_balance') - current_frozen,
                     available_balance=F('available_balance') + current_frozen
                 )
+            wallet = self.get(user=order.user, asset_type=asset_type)
+            LedgerEntryModel.objects.create_release_ledgers(wallet, current_frozen, order)
 
 
 class WalletManager(models.Manager.from_queryset(WalletQuerySet)):

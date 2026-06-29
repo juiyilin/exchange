@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     "currency",
     "member",
     "transaction",
+    "ledger",
     "drf_standardized_errors",
     'django_filters',
 ]

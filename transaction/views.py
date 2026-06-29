@@ -10,6 +10,7 @@ from .constants import OrderStatus
 from .models import OrderModel
 from .serializers import OrderCreateUpdateSerializer, OrderSerializer
 from member.models import WalletModel
+from ledger.models import LedgerEntryModel
 
 
 class OrderViewSet(ModelViewSet):
@@ -40,6 +41,8 @@ class OrderViewSet(ModelViewSet):
 
             self.transfer_to_frozen(wallet, required_balance)
             order = serializer.save()
+            LedgerEntryModel.objects.create_order_ledgers(wallet, required_balance, order)
+
             headers = self.get_success_headers(serializer.data)
         # commit 後 celery 才送到撮合市場。如果 with 報錯，後續都不會執行
         send_to_match_market.delay(order.id, order.trading_pair.id)
