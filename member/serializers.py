@@ -102,3 +102,11 @@ class WithdrawSerializer(serializers.Serializer):
             raise serializers.ValidationError('需大於 0')
         return value
 
+
+class DepositSerializer(WithdrawSerializer):
+    user_id = serializers.IntegerField()
+
+    def validate_user_id(self, value):
+        if User.objects.filter(id=value).exists():
+            return User.objects.filter(id=value).first().id
+        raise serializers.ValidationError('無此使用者')

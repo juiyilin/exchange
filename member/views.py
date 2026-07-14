@@ -6,8 +6,9 @@ from rest_framework.response import Response
 from rest_framework.mixins import CreateModelMixin, UpdateModelMixin
 from rest_framework.viewsets import ModelViewSet, GenericViewSet
 from rest_framework import serializers
+from rest_framework.permissions import IsAdminUser
 from .models import WalletModel, UserProfileModel
-from .serializers import LoginSerializer, RegisterSerializer, TwoFactorEnableSerializer, UserListSerializer, WalletSerializer, WithdrawSerializer
+from .serializers import LoginSerializer, RegisterSerializer, TwoFactorEnableSerializer, UserListSerializer, WalletSerializer, WithdrawSerializer, DepositSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
 from ledger.models import LedgerEntryModel
 
@@ -57,8 +58,21 @@ class WalletViewSet(ModelViewSet):
     def perform_create(self, serializer):
         # 這裡可以添加一些創建錢包前的邏輯，例如檢查用戶是否存在等
         user = self.request.user
-        # user = self.request.user
         serializer.save(user=user)
+
+    @action(methods=['post'], detail=False, permission_classes=[IsAdminUser])
+    @transaction.atomic
+    def deposit(self, request):
+        """admin user幫user入金，用於範圍一(沒有串鏈)測試"""
+        serializer = DepositSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        wallet, _ = WalletModel.objects.select_for_update().get_or_create(user_id=serializer.validated_data['user_id'], asset_type_id=serializer.validated_data['asset_type_id'])
+
+        wallet.available_balance += serializer.validated_data['quantity']
+        wallet.save()
+        LedgerEntryModel.objects.create_deposit_ledgers(wallet, serializer.validated_data['quantity'])
+        return Response(WalletSerializer(wallet).data)
 
     @action(methods=['post'], detail=False)
     @transaction.atomic

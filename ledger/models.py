@@ -1,8 +1,23 @@
 from django.db import models
 from django.contrib.auth.models import User
+from common.models import BaseTimeModel
 from currency.models import CurrencyModel
-from .constants import ReasonType, BalanceFieldType
+from .constants import ReasonType, BalanceFieldType, DepositWithdrawType, DepositWithdrawStatus
 from transaction.constants import OrderStatus
+
+
+class DepositWithdrawModel(BaseTimeModel):
+    user = models.ForeignKey(User, null=True, on_delete=models.SET_NULL, verbose_name='使用者')
+    asset_type = models.ForeignKey(CurrencyModel, null=True, on_delete=models.SET_NULL, verbose_name='哪個幣別的錢包')
+    amount = models.DecimalField(max_digits=20, decimal_places=2, verbose_name='金額')
+    direction = models.CharField(max_length=20, choices=DepositWithdrawType.choices, verbose_name='變動方向')
+    status = models.CharField(max_length=20, choices=DepositWithdrawStatus.choices, verbose_name='狀態')
+    tx_hash = models.CharField(max_length=100, blank=True, default="", db_index=True)
+    address = models.CharField(max_length=100, blank=True, default="")
+
+    class Meta:
+        verbose_name = "出入金紀錄"
+        verbose_name_plural = "出入金紀錄"
 
 
 class LedgerEntryQuerySet(models.QuerySet):
@@ -124,8 +139,26 @@ class LedgerEntryQuerySet(models.QuerySet):
         self.create(**available_ledger_dict)
         self.create(**frozen_ledger_dict)
 
+    def create_deposit_ledgers(self, wallet, delta):
+        """入金時的流水帳"""
+        deposit = DepositWithdrawModel.objects.create(user=wallet.user, asset_type=wallet.asset_type, amount=delta,
+                                            direction=DepositWithdrawType.DEPOSIT, status=DepositWithdrawStatus.DONE)
+        ledger_dict = {
+            'user': wallet.user,
+            'asset_type': wallet.asset_type,
+            'reason': ReasonType.DEPOSIT,
+            'balance_field': BalanceFieldType.AVAILABLE,
+            'delta': delta,
+            'balance_after': wallet.available_balance,
+            'ref_type': deposit._meta.model_name,
+            'ref_id': str(deposit.id)
+        }
+        self.create(**ledger_dict)
+
     def create_withdraw_ledgers(self, wallet, delta):
         """出金時的流水帳"""
+        withdraw = DepositWithdrawModel.objects.create(user=wallet.user, asset_type=wallet.asset_type, amount=delta,
+                                            direction=DepositWithdrawType.WITHDRAW, status=DepositWithdrawStatus.DONE)
         ledger_dict = {
             'user': wallet.user,
             'asset_type': wallet.asset_type,
@@ -133,12 +166,10 @@ class LedgerEntryQuerySet(models.QuerySet):
             'balance_field': BalanceFieldType.AVAILABLE,
             'delta': -delta,
             'balance_after': wallet.available_balance,
-            'ref_type': 'deposit_withdraw',
-            'ref_id': ''
+            'ref_type': withdraw._meta.model_name,
+            'ref_id': str(withdraw.id)
         }
         self.create(**ledger_dict)
-
-
 
 
 class LedgerEntryManager(models.Manager.from_queryset(LedgerEntryQuerySet)):

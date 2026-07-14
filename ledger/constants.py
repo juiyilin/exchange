@@ -1,6 +1,17 @@
 from django.db import models
 
 
+class DepositWithdrawType(models.TextChoices):
+    DEPOSIT = "DEPOSIT", "入金"
+    WITHDRAW = "WITHDRAW", "出金"
+
+
+class DepositWithdrawStatus(models.TextChoices):
+    PENDING = "PENDING", "處理中"
+    DONE = "DONE", "完成"
+    FAILED = "FAILED", "失敗"
+
+
 class ReasonType(models.TextChoices):
     FREEZE = "FREEZE", "下單凍結"
     UNFREEZE = "UNFREEZE", "取消後解凍"
