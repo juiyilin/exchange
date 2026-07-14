@@ -1,7 +1,13 @@
-# 細部規格 — 撮合引擎（matching engine）
+# 細部規格 — 撮合引擎（matching engine）〔範圍一〕
 
 > 對應 app：`transaction`　主要 model：`OrderModel`、`TransactionModel`
-> 上層文件：`00_overall_spec.md`　相關：`03_order_spec.md`、`05_settlement_spec.md`
+> 上層文件：`00_overall_spec.md`　相關：`03-1_order_spec.md`、`05-1_settlement_spec.md`
+>
+> **範圍二（測試鏈）無對應檔案，因為本模組在範圍二完全不變。**
+> 撮合純粹是內部訂單簿的配對，不上鏈、不碰私鑰、不需要確認數。
+> 真實交易所也是如此——鏈只負責入金/出金兩端，中間的買賣**根本不上鏈**
+> （不然每秒幾十萬筆交易鏈撐不住）。這正是 CEX 存在的理由。
+> （撮合真正的下一個大階段是 DEX 化：屆時撮合搬到智能合約，另立規格。）
 
 這是整個交易所的心臟。把它做對、做穩，你就懂了交易所最核心的東西。
 

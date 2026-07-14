@@ -1,7 +1,10 @@
-# 細部規格 — 幣別與交易對（currency）
+# 細部規格 — 幣別與交易對（currency）〔範圍一〕
 
-> 對應 app：`currency`　主要 model：`CurrencyModel`
-> 上層文件：`00_overall_spec.md`
+> 對應 app：`currency`　主要 model：`CurrencyModel`、`TradingPairModel`
+> 上層文件：`00_overall_spec.md`　**範圍二續篇：`01-2_currency_spec.md`**（幣別的鏈上屬性）
+>
+> 本檔只談**範圍一（純內部帳本，不碰鏈）**。接上測試鏈後幣別要補的鏈上屬性
+> （在哪條鏈、合約地址、decimals、確認數）全部收在 `01-2`。
 
 ## 1. 這個模組負責什麼
 

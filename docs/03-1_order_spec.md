@@ -1,7 +1,12 @@
-# 細部規格 — 訂單（order）
+# 細部規格 — 訂單（order）〔範圍一〕
 
 > 對應 app：`transaction`　主要 model：`OrderModel`
-> 上層文件：`00_overall_spec.md`　相關：`04_matching_engine_spec.md`、`05_settlement_spec.md`
+> 上層文件：`00_overall_spec.md`　相關：`04-1_matching_engine_spec.md`、`05-1_settlement_spec.md`
+>
+> **範圍二（測試鏈）無對應檔案，因為本模組在範圍二完全不變。**
+> 訂單只操作**內部帳本**的數字，從頭到尾不知道「鏈」的存在。接上測試鏈後，
+> 鏈的複雜度全被關在入出金模組裡（見 `06-2`），訂單這層感受不到任何差異——
+> 這不是漏寫，而是 `06-1` 揭示的設計原則正在生效：**核心模組不知道鏈的存在**。
 
 ## 1. 這個模組負責什麼
 
@@ -18,7 +23,7 @@
 - **買單（BUY）**：我想得到 BASE、付出 QUOTE。`currency2 = BASE`（進來）、`currency1 = QUOTE`（出去）。
 - **賣單（SELL）**：我想賣掉 BASE、得到 QUOTE。`currency1 = BASE`（出去）、`currency2 = QUOTE`（進來）。
 
-> 這個 currency1/currency2 的設計有點繞，進階改用交易對 model 會更直覺（見 `01_currency_spec.md` 6.1）。基本階段先沿用現況。
+> 這個 currency1/currency2 的設計有點繞，進階改用交易對 model 會更直覺（見 `01-1_currency_spec.md` 6.1）。基本階段先沿用現況。
 
 ### 下單要凍結多少（現況邏輯，已實作）
 

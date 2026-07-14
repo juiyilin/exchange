@@ -1,7 +1,11 @@
-# 細部規格 — 成交結算（settlement）
+# 細部規格 — 成交結算（settlement）〔範圍一〕
 
 > 對應 app：`transaction` / `member`　主要 model：`TransactionModel`、`WalletModel`
-> 上層文件：`00_overall_spec.md`　相關：`04_matching_engine_spec.md`、`02_member_wallet_spec.md`
+> 上層文件：`00_overall_spec.md`　相關：`04-1_matching_engine_spec.md`、`02-1_member_wallet_spec.md`
+>
+> **範圍二（測試鏈）無對應檔案，因為本模組在範圍二完全不變。**
+> 結算是「內部帳本四個餘額欄位的原子搬移」——沒有簽名、沒有 gas、沒有確認等待，毫秒完成。
+> 它與鏈上轉帳是**兩回事**：接上測試鏈後，結算邏輯一行都不用改。
 
 ## 1. 這個模組負責什麼
 

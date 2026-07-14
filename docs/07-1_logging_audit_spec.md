@@ -1,9 +1,10 @@
-# 細部規格 — 日誌與帳本（logging / audit）
+# 細部規格 — 日誌與帳本（logging / audit）〔範圍一〕
 
-> 對應 app：**`ledger`（新增；帳本流水 + 入出金紀錄）**、`transaction`（成交/訂單事件，已存在）
-> 上層文件：`00_overall_spec.md`　相關：`02_member_wallet_spec.md`、`05_settlement_spec.md`、`06_deposit_withdraw_spec.md`
+> 對應 app：**`ledger`（帳本流水 + 入出金紀錄）**、`transaction`（成交/訂單事件，已存在）
+> 上層文件：`00_overall_spec.md`　**範圍二續篇：`07-2_logging_audit_spec.md`**（狀態機、鏈上冪等、鏈上對帳）
+> 相關：`02-1_member_wallet_spec.md`、`05-1_settlement_spec.md`、`06-1_deposit_withdraw_spec.md`
 >
-> **狀態：設計定案、實作進行中（M-日誌與帳本，屬進階）。** 基本階段(v0.1)不寫任何 log；此文件是實作的依據。
+> **狀態：✅ 已實作完成（M-日誌與帳本）。** 測試見 `ledger/test/test_ledger.py`、`ledger/test/test_deposit_withdraw.py`。
 >
 > **架構決策（2026-06，與原規格的差異）**：原本把 `LedgerEntryModel` 規劃在 `member`（跟 `WalletModel` 同 app）。
 > 改為**獨立成新的 `ledger` app**，把帳本流水 `LedgerEntryModel` 與入出金紀錄 `DepositWithdrawModel` 收在一起（兩者都偏稽核性質）。
@@ -91,7 +92,36 @@ C 已經有了；要補的是 **A（帳本流水）** 和 **B（入出金紀錄�
 | `address` | 對方地址（範圍 1 留空，範圍 2 才填） |
 | `created_at` / `updated_at` | 時間 |
 
-範圍 1（模擬）：`status` 直接 `DONE`、`tx_hash`/`address` 留空。範圍 2（測試鏈）：依鏈上確認流程更新 `status` 與 `tx_hash`。
+範圍一（模擬）：`status` 直接 `DONE`、`tx_hash`/`address` 留空——這兩欄現在用不到，但先留著。
+**範圍二**（狀態機真的轉移、`tx_hash` 唯一性與冪等、出金失敗的反向分錄）→ 見 **`07-2_logging_audit_spec.md`**。
+
+欄位長度依據：`tx_hash` 100（以太 66 = `0x` + 64 hex；比特幣 64），`address` 100
+（以太 42；比特幣 bech32 上限 90）。`varchar(n)` 的長度只是約束，不影響儲存空間，留餘裕不花成本。
+
+> **注意：`DepositWithdrawModel` 不是 append-only。** 它跟 `LedgerEntry` 不同——它有 `status` 會轉移（`PENDING → DONE/FAILED`），
+> 是一筆「會被更新」的業務紀錄，所以**不要**像 `LedgerEntry` 那樣覆寫 `save()`/`delete()` 去擋更新。範圍 1 直接建成 `DONE` 即可。
+> 兩者的關係：`DepositWithdrawModel` 是「出入金這件事」的業務列，`LedgerEntry` 是它造成的「餘額變動」分錄，後者用 `ref_type="deposit_withdraw"` + `ref_id=str(該列.id)` 指回前者。
+
+### 4.1 入金 / 出金端點與記帳 wiring（範圍 1）
+
+兩端都在 `WalletViewSet`（`member/views.py`），各自全程 `@transaction.atomic`，在同一個 atomic 內「動餘額 + 建 DW 列 + 寫 LedgerEntry」三件事一起完成。
+
+**出金（已存在，補記帳）** `POST /api/user/wallet/withdraw/`
+
+- 行為照 `06` §2 不變（鎖錢包、檢查、扣 `available`）。
+- 通過後追加：建一筆 `DepositWithdrawModel(user=request.user, asset_type, amount=quantity, direction=WITHDRAW, status=DONE)`；
+  再寫 `LedgerEntry(reason=WITHDRAW, balance_field=AVAILABLE, delta=-quantity, balance_after, ref_type="deposit_withdraw", ref_id=str(dw.id))`。
+- 即把原本暫時的 `ref_type="manual"` 換成 `deposit_withdraw` 並指向這筆 DW 列。
+
+**入金（新增，admin-only）** `POST /api/user/wallet/deposit/`
+
+- 做成 `WalletViewSet` 的 `@action(detail=False, methods=['post'])`，**`permission_classes=[IsAdminUser]`**（入金是把幣記到某用戶頭上，屬內部/管理操作；真實 CEX 由鏈上偵測觸發，這裡用 admin 模擬）。
+- body：`{"user_id": <目標用戶>, "asset_type_id": <幣別>, "quantity": "<金額>"}`。注意入金是「admin 替某用戶入金」，所以對象用 body 的 `user_id`，**不是** `request.user`（這點與 withdraw 相反）。
+- 驗證：`quantity <= 0` → 400；非 admin → 403。
+- 行為（atomic）：`get_or_create` 該用戶+幣別錢包；`available += quantity`；建 `DepositWithdrawModel(direction=DEPOSIT, status=DONE)`；寫 `LedgerEntry(reason=DEPOSIT, balance_field=AVAILABLE, delta=+quantity, balance_after, ref_type="deposit_withdraw", ref_id=str(dw.id))`。回 200/201。
+
+> 做了入金端點後，整個系統的**對帳不變量在實務上才真正成立**：每個錢包的餘額都能往回追到「入金 → 凍結 → 結算 → 退款 → 出金」一連串有記錄的變動，不再有「admin 手動加數字、帳本卻沒這筆」的破口。
+> （admin 後台手動改 `available` 的舊做法仍可用於臨時調整，但那種就走 `reason` 的 manual 類，見 §3.2。）
 
 ## 5. 哪些操作要寫 log（套用點）
 
@@ -102,8 +132,8 @@ C 已經有了；要補的是 **A（帳本流水）** 和 **B（入出金紀錄�
 | 下單凍結（`03`） | `OrderViewSet.transfer_to_frozen`（`transaction/views.py`，已在 `create` 的 atomic 內） | 兩筆 `FREEZE`：AVAILABLE（−total）、FROZEN（+total） |
 | 撮合結算（`05`） | `WalletQuerySet.transfer_asset`（`member/models.py`，在 `match_order` 的 atomic 內） | 四筆 `SETTLE`：買方 base AVAILABLE(+)、quote FROZEN(−)；賣方 base FROZEN(−)、quote AVAILABLE(+)。收/付靠 `balance_field`+正負區分（見 §3.2） |
 | 取消／多凍退款（`04`） | `WalletQuerySet.release_frozen`（`member/models.py`） | 兩筆：FROZEN（−）、AVAILABLE（+）。**reason 依 `order.status` 決定**：CANCELED→`UNFREEZE`、FULLY_FILLED→`REFUND` |
-| 出金（`06`） | `WalletViewSet.withdraw`（`member/views.py`，已在 atomic 內） | `DepositWithdrawModel` + `LedgerEntryModel`：WITHDRAW（AVAILABLE −） |
-| 入金 | 目前是 admin 手動加數字（無函式） | 啟用 log 後若要納入對帳，需走一個會寫 `DepositWithdrawModel` + `LedgerEntryModel`：DEPOSIT（AVAILABLE +）的入金路徑 |
+| 出金（`06`） | `WalletViewSet.withdraw`（`member/views.py`，已在 atomic 內） | `DepositWithdrawModel`(direction=WITHDRAW, DONE) + `LedgerEntry`：WITHDRAW（AVAILABLE −），`ref_type="deposit_withdraw"`（見 §4.1） |
+| 入金（`06`） | `WalletViewSet.deposit`（新增 admin-only action，見 §4.1） | `DepositWithdrawModel`(direction=DEPOSIT, DONE) + `LedgerEntry`：DEPOSIT（AVAILABLE +），`ref_type="deposit_withdraw"` |
 | 交易手續費（進階） | 尚未實作 | `LedgerEntryModel`：TRADING_FEE（交易所抽成，非 gas；見下方 §5.1） |
 
 > 取消與退款共用同一個 `release_frozen`，所以「這次是 UNFREEZE 還是 REFUND」要靠 `order.status` 區分

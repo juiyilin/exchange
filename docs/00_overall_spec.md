@@ -31,7 +31,7 @@
 | 成交與結算                              | 真實主網入金/出金        |
 | 入金/出金（**模擬**：後台手動加減數字） | —                        |
 
-「升級路徑」指的是：入金/出金模組會設計成一個獨立接口，現在用「後台手動加數字」實作，未來要接測試鏈時，只換掉那一塊的實作，其他模組不動。詳見 `06_deposit_withdraw_spec.md`。
+「升級路徑」指的是：入金/出金模組會設計成一個獨立接口，現在用「後台手動加數字」實作，未來要接測試鏈時，只換掉那一塊的實作，其他模組不動。詳見 `06-1_deposit_withdraw_spec.md`。
 
 ---
 
@@ -82,7 +82,7 @@
 **為什麼撮合要丟到 Celery（非同步）？**
 下單的 API 要回得快——使用者按下「買」應該立刻得到「訂單已建立」的回應，不該卡著等撮合。撮合是後台的事，可能要掃整個訂單簿、可能要連續成交好幾筆，放到背景的 Celery worker 慢慢做，API 就能秒回。這也是現實交易所的做法：下單和撮合是分開的兩件事。
 
-> v0.1 的簡化：初期撮合可以先寫成「同步」直接在下單時跑（方便除錯），等核心穩了再搬到 Celery。這在 `04_matching_engine_spec.md` 會說明兩種做法的取捨。
+> v0.1 的簡化：初期撮合可以先寫成「同步」直接在下單時跑（方便除錯），等核心穩了再搬到 Celery。這在 `04-1_matching_engine_spec.md` 會說明兩種做法的取捨。
 
 ---
 
@@ -93,10 +93,10 @@
 | App           | 職責                         | 主要 Model                                 | 細部規格文件                                                              |
 | ------------- | ---------------------------- | ------------------------------------------ | ------------------------------------------------------------------------- |
 | `common`      | 共用基底與工具               | `BaseTimeModel`（建立/更新時間）           | （無，跨模組共用）                                                        |
-| `currency`    | 幣別與交易對                 | `CurrencyModel`                            | `01_currency_spec.md`                                                     |
-| `ledger`      | 帳本流水、入出金紀錄（稽核） | `LedgerEntryModel`、`DepositWithdrawModel` | `07_logging_audit_spec.md`                                                |
-| `member`      | 用戶、個人資料、錢包帳本     | `UserProfileModel`、`WalletModel`          | `02_member_wallet_spec.md`                                                |
-| `transaction` | 訂單、撮合、成交             | `OrderModel`、`TransactionModel`           | `03_order_spec.md`、`04_matching_engine_spec.md`、`05_settlement_spec.md` |
+| `currency`    | 幣別與交易對                 | `CurrencyModel`                            | `01-1`（範圍二：`01-2`）                                                    |
+| `ledger`      | 帳本流水、入出金紀錄（稽核） | `LedgerEntryModel`、`DepositWithdrawModel` | `07-1`（範圍二：`07-2`）                                                    |
+| `member`      | 用戶、個人資料、錢包帳本     | `UserProfileModel`、`WalletModel`          | `02-1`（範圍二：`02-2`）、入出金端點見 `06-1`                               |
+| `transaction` | 訂單、撮合、成交             | `OrderModel`、`TransactionModel`           | `03-1`、`04-1`、`05-1`（**範圍二無變更**）                                  |
 
 `ledger` 是後加的稽核層（M-日誌與帳本）：每次錢包餘額變動都在同一個 atomic 內補寫一筆不可變的 `LedgerEntryModel`。
 入金/出金的業務紀錄 `DepositWithdrawModel` 也收在這裡（原規劃在 `member`，見 `07` 的架構決策）。
@@ -118,7 +118,7 @@ common ← currency ← ledger ← member ← transaction
 
 > `ledger` 能插進 `currency` 與 `member` 之間，是因為它**只**向下依賴 `currency`（`LedgerEntryModel.asset_type` FK 到 `CurrencyModel`），
 > 而且對訂單/成交只用「軟參照」(字串 `ref_type`/`ref_id`)、不做 FK。一旦它反過來 FK 到 `WalletModel` 或 `OrderModel`，
-> 就會和 `member`/`transaction` 互相依賴形成環。細節見 `07_logging_audit_spec.md` §3.1。
+> 就會和 `member`/`transaction` 互相依賴形成環。細節見 `07-1_logging_audit_spec.md` §3.1。
 
 ---
 
@@ -187,14 +187,33 @@ common ← currency ← ledger ← member ← transaction
 
 ## 7. 文件導覽
 
-| 檔案                          | 內容                                                       |
-| ----------------------------- | ---------------------------------------------------------- |
-| `00_overall_spec.md`          | （本檔）整體地圖                                           |
-| `01_currency_spec.md`         | 幣別與交易對                                               |
-| `02_member_wallet_spec.md`    | 用戶、個人資料、錢包帳本                                   |
-| `03_order_spec.md`            | 訂單模型、下單流程、狀態機                                 |
-| `04_matching_engine_spec.md`  | 撮合引擎演算法                                             |
-| `05_settlement_spec.md`       | 成交結算與餘額不變量                                       |
-| `06_deposit_withdraw_spec.md` | 入金/出金（模擬，預留測試鏈）                              |
-| `07_logging_audit_spec.md`    | 日誌與帳本（LedgerEntry / 入出金紀錄，設計定案、實作延後） |
-| `TASKS.md`                    | 可接手的分階段待辦清單                                     |
+規格檔名為 **`NN-S_模組名_spec.md`**：`NN` 是模組編號，**`S` 是範圍**——
+**`-1` = 範圍一（純內部帳本，不碰鏈）**，**`-2` = 範圍二（接測試鏈）**。
+
+### 範圍一（目前在做）
+
+| 檔案                            | 內容                                     |
+| ------------------------------- | ---------------------------------------- |
+| `00_overall_spec.md`            | （本檔）整體地圖，跨範圍                 |
+| `01-1_currency_spec.md`         | 幣別與交易對                             |
+| `02-1_member_wallet_spec.md`    | 用戶、個人資料、錢包帳本                 |
+| `03-1_order_spec.md`            | 訂單模型、下單流程、狀態機               |
+| `04-1_matching_engine_spec.md`  | 撮合引擎演算法                           |
+| `05-1_settlement_spec.md`       | 成交結算與餘額不變量                     |
+| `06-1_deposit_withdraw_spec.md` | 入金/出金（模擬）                        |
+| `07-1_logging_audit_spec.md`    | 日誌與帳本（LedgerEntry / 入出金紀錄）   |
+| `TASKS.md`                      | 可接手的分階段待辦清單                   |
+
+### 範圍二（測試鏈，設計文件、尚未實作）
+
+| 檔案                            | 內容                                                       |
+| ------------------------------- | ---------------------------------------------------------- |
+| `01-2_currency_spec.md`         | 幣別的鏈上屬性（chain / 合約地址 / decimals / 確認數）;⚠️ 精度 migration |
+| `02-2_member_wallet_spec.md`    | 充值地址（`DepositAddressModel`、HD 派生）、熱/冷錢包       |
+| `06-2_deposit_withdraw_spec.md` | 鏈上入金（監聽 → 確認數 → 入帳）與鏈上出金（扣款 → 廣播 → 確認/失敗退款） |
+| `07-2_logging_audit_spec.md`    | 狀態機真的轉移、`tx_hash` 唯一與冪等、反向分錄、鏈上餘額對帳 |
+
+> **`03`／`04`／`05` 沒有 `-2` 檔案，這是刻意的。**
+> 訂單、撮合、結算在範圍二**一行都不用改**——它們只操作內部帳本，
+> **完全不知道「鏈」的存在**。鏈的複雜度全被關在入出金模組（`06-2`）裡。
+> 這正是 `06-1` 那條設計原則在發揮作用；也是「接測試鏈」之所以不需要重寫核心的原因。

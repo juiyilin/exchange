@@ -3,7 +3,7 @@ M-日誌與帳本 — 單元測試（這是「規格」，不是實作）
 
 ============================================================================
 這份測試定義了 `ledger` app 該有的行為，請寫實作讓底下每條測試變綠。
-完整設計見 docs/07_logging_audit_spec.md。實作 checklist 見 07 §6.2。
+完整設計見 docs/07-1_logging_audit_spec.md。實作 checklist 見 07 §6.2。
 
 核心契約：
   (A) LedgerEntryModel 是 append-only 的帳本流水：只新增、不可更新、不可刪除。

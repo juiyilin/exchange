@@ -7,15 +7,17 @@
 
 - 專案是 Django 5.2 + DRF + Celery + Redis + PostgreSQL 的中心化交易所後端。
 - 範圍：**純內部帳本（模擬）**，文件已預留通往「測試鏈入金/出金」的路。
-- App：`common`（基底）、`currency`（幣別）、`member`（用戶/錢包）、`transaction`（訂單/撮合/成交）。
+- App：`common`（基底）、`currency`（幣別）、`member`（用戶/錢包）、`transaction`（訂單/撮合/成交）、`ledger`（帳本/出入金紀錄）。
 - 完整設計在 `docs/00_overall_spec.md` 及各細部規格。**接手前先讀對應的規格文件。**
+- **規格檔名 `NN-S_模組_spec.md`：`-1` = 範圍一（純內部帳本，不碰鏈，目前在做）、`-2` = 範圍二（接測試鏈，設計完成、未實作）。**
+  `03`/`04`/`05`（訂單/撮合/結算）**只有 `-1`**——它們在範圍二完全不變，因為核心模組不知道「鏈」的存在。
 - 引導風格：解釋概念、給驗證標準、指出該改哪個檔案/該注意什麼坑，**但不替使用者寫實作程式碼**。
 - 使用者背景：對區塊鏈/交易所不熟，跟著 Gemini 教學起步，需要由淺入深。
 - 語言：繁體中文。
 
 ---
 
-## 目前進度（最後更新：M-日誌與帳本 核心完成 — LedgerEntryModel + 四套用點記帳 + 對帳不變量測試全綠;剩 DepositWithdrawModel 之後做）
+## 目前進度（最後更新：**M-日誌與帳本 全部完成** — LedgerEntryModel + 四套用點記帳 + 對帳不變量 + DepositWithdrawModel/出入金端點,測試全綠。下一步建議:還 cancel 交易對鎖的技術債,或進 M-KYC）
 
 **節奏原則：先把「基本」功能全部做完，再進入「進階」。**（基本/進階的分類見 `00_overall_spec.md` 第 5 節功能總表）
 
@@ -41,7 +43,7 @@
 
 ---
 
-## M1 — 幣別與錢包就緒　〔規格：01, 02〕
+## M1 — 幣別與錢包就緒　〔規格：01-1, 02-1〕
 
 - [x] admin 後台註冊 `CurrencyModel`（已完成）
 - [x] admin 後台註冊 `UserProfileModel`、`WalletModel`（已完成，還加了 UserProfileInline）
@@ -51,7 +53,7 @@
 - [x] （選做）幣別查詢 API（`/api/currency/` 已掛 URL）
 - [x] 驗證：API/admin 查得到餘額
 
-## M2 — 下單與凍結　〔規格：03〕
+## M2 — 下單與凍結　〔規格：03-1〕
 
 - [x] 確認下單 API 能建單且正確凍結餘額（買單凍 USDT=quantity×price、賣單凍 BTC=quantity，雙向驗證通過）
 - [x] 確認餘額不足會被擋下並回 400（已驗證：回 400「用戶可用餘額不足」）
@@ -63,7 +65,7 @@
 > 備註：訂單查詢若要顯示「待成交量」，需在 OrderSerializer 加一個 SerializerMethodField 對應 `waiting_transaction_quantity()`（目前 fields="**all**" 不含 model 方法）。
 > 備註：OrderModel 未在 admin 註冊，訂單只能用 API 查；若想在後台看，之後可補 transaction/admin.py。
 
-## M3 — 撮合與結算（同步版）★核心★　〔規格：04, 05〕　✅ 完成（13 測試全綠）
+## M3 — 撮合與結算（同步版）★核心★　〔規格：04-1, 05-1〕　✅ 完成（13 測試全綠）
 
 - [x] 把撮合寫成獨立函式（`transaction/tasks.py` 的 `match_order(order_id)`，同步）
 - [x] 實作價格時間優先的對手查詢（`OrderQuerySet.get_waiting_match_orders`，排序 price → ordered_at → id）
@@ -78,7 +80,7 @@
 > 測試在 transaction/test/ 底下（test_matching.py、test_orders.py）。
 > 已知簡化：買單低於掛價成交的「多凍結退款」尚未做（M4）；撮合仍同步（M5 改 Celery）。
 
-## M-基本收尾 — 模擬出金　〔規格：06 §2/§3〕　✅ 完成
+## M-基本收尾 — 模擬出金　〔規格：06-1〕　✅ 完成
 
 - [x] `POST /api/user/wallet/withdraw/`：`WalletViewSet` 的 `@action(detail=False, methods=['post'])`
 - [x] body `{asset_type_id, quantity}`；用戶 `get_random_user()`；全程 `@transaction.atomic`
@@ -94,7 +96,7 @@
 
 # ===== 以下為「進階」階段（基本全部完成後才做）=====
 
-## M4 — 訂單生命週期【進階】　〔規格：03, 05〕　✅ 完成（測試全綠，25 條）
+## M4 — 訂單生命週期【進階】　〔規格：03-1, 05-1〕　✅ 完成（測試全綠，25 條）
 
 - [x] 取消訂單：解凍剩餘凍結餘額、狀態改 CANCELED（POST /order/{id}/cancel/，@action detail=True）
 - [x] 多凍結退款（買單終態時退「原凍結 − 實際花費」差額；與取消共用 release_frozen）
@@ -111,7 +113,7 @@
 > - 新測試檔：`transaction/test/test_cancel_refund.py`（9 條）。
 > - 併發互斥僅做到 cancel 的 select_for_update + 重檢；完整序列化留 M6。
 
-## M5 — 非同步化　〔規格：04〕　✅ 完成
+## M5 — 非同步化　〔規格：04-1〕　✅ 完成
 
 - [x] 啟動 Redis（Docker：`docker run -d --name exchange-redis -p 6373:6379 redis:7`）+ Celery worker（`uv run celery -A exchange worker -l info`）
 - [x] 下單改成 `send_to_match_market.delay()`，API 秒回
@@ -134,7 +136,7 @@
 
 > 為什麼：自我成交（wash trading）會製造假成交量/假行情，是被禁止的市場操縱，正規交易所一律在撮合層擋掉。本專案採最單純策略：跳過自己的單、留在簿上。
 
-## M6 — 併發安全　〔規格：04, 02〕　✅ 完成（3 支併發測試綠）
+## M6 — 併發安全　〔規格：04-1, 02-1〕　✅ 完成（3 支併發測試綠）
 
 - [x] 撮合對訂單/錢包加 `select_for_update`（taker、maker 查詢已鎖；`release_frozen` 改 F() 相對運算免掉更新）
 - [x] 同一交易對撮合序列化：`match_order` 開頭先 `select_for_update` 鎖 `TradingPairModel` 當閘門
@@ -151,7 +153,7 @@
 > - 引擎是**逐筆連續撮合**（非集合競價）；Celery 只是搬到背景跑，仍一張一張即時撮。
 > - 待加固（選做）：cancel 目前未取交易對鎖，與撮合在「訂單↔錢包」間理論上仍可能繞環；要徹底一致可讓 cancel 也先鎖交易對。
 
-## M7 — 認證（補技術債）　〔規格：02〕　✅ 完成（JWT + 強制 TOTP 2FA + 註冊;54 測試綠）
+## M7 — 認證（補技術債）　〔規格：02-1〕　✅ 完成（JWT + 強制 TOTP 2FA + 註冊;54 測試綠）
 
 ### A 階段：基礎認證（JWT, simplejwt）
 
@@ -177,7 +179,7 @@
 > - 既有 `force_authenticate` 測試不受強制 2FA 影響（直接設 request.user、不走 login serializer）。
 > - 註冊豁免在這裡一併做掉了（RegisterView authentication_classes/permission_classes=[]）;M-KYC 只剩「KYC 欄位/審核/風險閘門」。
 
-## M-身份組與權限（RBAC）【進階】　〔規格：02 §6.5〕　待做
+## M-身份組與權限（RBAC）【進階】　〔規格：02-1 §6.5〕　待做
 
 - [ ] 用 Django Group 分角色（如 trader / support / admin）
 - [ ] 對需要的 ViewSet 掛 `DjangoModelPermissions`（HTTP 方法↔model 權限）或自訂 permission 檢查 `request.user.groups`
@@ -185,7 +187,7 @@
 - [ ] 釐清「角色層（能做哪種 CRUD）」與「擁有權層（只能碰自己的）」兩維度一起生效
 - [ ] 驗證：不同角色帳號對同一端點的 CRUD 權限符合預期
 
-## M-KYC（身份驗證 + 註冊上線流程）【進階】　〔規格：02〕　待做
+## M-KYC（身份驗證 + 註冊上線流程）【進階】　〔規格：02-1〕　待做
 
 > 註冊流程與 KYC 一起做，避免改兩次。M7-A 暫時把註冊豁免延到這裡。
 
@@ -196,7 +198,7 @@
 - [ ] 風險閘門：未通過 KYC 限制敏感操作（如出金、額度上限）
 - [ ] 驗證：未驗證用戶被擋在受限操作之外;通過後解鎖
 
-## M-日誌與帳本【進階】　〔規格：07〕　✅ 核心完成（測試全綠;剩 DepositWithdrawModel）
+## M-日誌與帳本【進階】　〔規格：07-1〕　✅ 全部完成（LedgerEntry + DepositWithdrawModel，測試全綠）
 
 **架構決策**：`LedgerEntryModel` 與 `DepositWithdrawModel` 獨立成新的 **`ledger` app**（原規劃在 member）。
 唯一前提：`ledger` 只向下依賴 `currency`，`asset_type` FK 到 `CurrencyModel`（不 FK wallet）、
@@ -205,7 +207,7 @@
 
 已由 Claude 完成（規格/文件/測試）：
 
-- [x] 更新 `07_logging_audit_spec.md`（ledger app、軟參照、套用點對照現有函式、F() 取 balance_after 的坑、實作 checklist §6.2）
+- [x] 更新 `07-1_logging_audit_spec.md`（ledger app、軟參照、套用點對照現有函式、F() 取 balance_after 的坑、實作 checklist §6.2）
 - [x] 更新 `00_overall_spec.md`（模組表 + 依賴圖加入 ledger）
 - [x] 建立 `ledger/` 骨架（apps.py / migrations / test / models.py 規格 docstring）
 - [x] 寫測試 `ledger/test/test_ledger.py`：model append-only 契約、各套用點（FREEZE/SETTLE/UNFREEZE/REFUND/WITHDRAW）、**對帳不變量端到端**
@@ -222,20 +224,48 @@
 > 不可再 ± delta（會重複扣）；且抓付款腿錢包時別把 `user=seller` 寫成 `user=buyer`（曾導致
 > SETTLE 的 balance_after 抓到錯人的錢包而對帳失敗）。
 
-剩餘（之後做）：
+### DepositWithdrawModel（出入金紀錄）　✅ 完成（test_deposit_withdraw.py 6 條全綠）
 
-- [ ] `DepositWithdrawModel`（07 §4）：建 model 後，把 `withdraw` 的 `ref_type` 從 `manual` 改成 `deposit_withdraw`、`ref_id` 指向該筆;入金也接上記帳路徑（DEPOSIT）
-- [ ] （選做進階）`TRADING_FEE` 手續費、manual 細分 reason（ADMIN_ADJUST/COMPENSATION/CORRECTION）+ `memo`/`operator` 欄位，見 07 §3.2
+決策：範圍＝出金+入金都記帳（見 07 §4 / §4.1）。
 
-## M8（升級到範圍 2）— 測試鏈入金/出金　〔規格：06〕
+- [x] `07` §4 / §4.1：DW 非 append-only（status 會轉，範圍1 直接 DONE）、入金端點設計 + 出入金記帳 wiring；§5 套用點表更新
+- [x] 測試 `ledger/test/test_deposit_withdraw.py`（DW model 契約、出金記 DW+ledger、admin-only 入金端點、對帳不變量）
+- [x] `DepositWithdrawModel`（ledger app）：`tx_hash`/`address` 各 100 字元、`tx_hash` 加 `db_index`、繼承 `BaseTimeModel`；status 可更新（不擋 save/delete）
+- [x] 出金 `withdraw`：建 DW(WITHDRAW, DONE)，LedgerEntry 的 ref 指回該 DW 列
+- [x] 入金 `WalletViewSet.deposit`：`@action` + `permission_classes=[IsAdminUser]`；body `{user_id, asset_type_id, quantity}`；atomic 內 get_or_create 錢包、available += quantity、建 DW(DEPOSIT, DONE) + LedgerEntry(DEPOSIT)
 
-- [ ] 加 `DepositWithdrawModel`（含 tx_hash / address 欄位）
-- [ ] 產生充值地址
-- [ ] 監聽鏈上到帳 + 確認數 → 入帳
-- [ ] 出金：扣餘額 → 簽署廣播 → 確認 → 完成
-- [ ] 私鑰用環境變數/金鑰管理，勿進 git
+> **為什麼入金是 admin-only**：真實 CEX 沒有「用戶呼叫 API 說幫我入金」這種端點——用戶是在**鏈上**自己轉帳，
+> 交易所靠**監聽服務偵測到帳**才入帳。入金的本質是「憑空增加餘額」，範圍 1 沒有鏈上依據，
+> 若開放給一般用戶等於任何人都能鑄錢。這個 admin 端點是**鏈上監聽器的替身**，範圍 2 會被取代並移除。
+>
+> **踩過的坑**：`create_deposit_ledgers` 的 `delta` 從 withdraw 複製過來忘了改號（入金應為 **+delta**），
+> 會讓對帳直接破功；入金必須 `get_or_create` 錢包（用戶第一次入金某幣時本來就還沒有錢包，
+> 與 withdraw 用 `.get()`、沒錢包回 400 的邏輯剛好相反）。
 
-## M-撮合公平性與嚴格定序【進階／正式引擎，DEX 階段再做】　〔規格：04〕
+> **範圍 2 的接續點**：入金核心（available += / 建 DW / 寫 ledger）保持可重用；屆時把觸發器從 admin 端點
+> 換成鏈上監聽器，並新增用戶端「取得充值地址」API、confirmations 邏輯、`tx_hash` 唯一（防同筆鏈上交易重複入帳）。
+
+剩餘（更後面）：
+
+- [ ] 範圍二相關的一切 → 見下方 M8（規格已寫齊：`01-2` / `02-2` / `06-2` / `07-2`）
+- [ ] （選做進階）`TRADING_FEE` 手續費、manual 細分 reason（ADMIN_ADJUST/COMPENSATION/CORRECTION）+ `memo`/`operator` 欄位，見 `07-1` §3.2
+
+## M8（升級到範圍二）— 測試鏈入金/出金　〔規格：01-2, 02-2, 06-2, 07-2〕　📄 設計已完成，未實作
+
+> 範圍二的設計文件已寫齊，動工前**先讀那四份**。核心心法：**只換觸發器與憑據，入金/出金的核心邏輯不變**；
+> 訂單/撮合/結算（`03`/`04`/`05`）**一行都不用改**。
+
+- [ ] **⚠️ 先處理精度**（`01-2` §3）：現在金額全是 `Decimal(20,2)`，只有 2 位小數 → **BTC 的 1 satoshi 會被存成 0.00，直接弄丟用戶的錢**。這是跨全系統的 migration（錢包/訂單/成交/帳本），**必須在碰真錢之前做完**。
+- [ ] 幣別加鏈上屬性（`01-2` §4）：`chain`、`is_native`、`contract_address`、`decimals`、`min_confirmations`、入出金開關;唯一鍵從 `code` 改成 `(code, chain)`
+- [ ] 充值地址（`02-2`）：`DepositAddressModel` + HD wallet 派生（只存 `derivation_index`，私鑰不進 DB）;`GET /api/deposit/address/`
+- [ ] 鏈上入金（`06-2` §2）：監聽服務 → 建 DW(PENDING) → 等 `min_confirmations` → 呼叫**範圍一同一個入金核心函式**入帳 → DONE
+- [ ] 鏈上出金（`06-2` §3）：先扣餘額建 DW(PENDING) → 熱錢包簽署廣播 → 確認 DONE;**失敗要寫反向分錄退款**（`07-2` §3）
+- [ ] 冪等性（`07-2` §2）：`tx_hash` 部分唯一索引（範圍一有空字串，不能直接 `unique=True`）;出金廣播前鎖 DW 檢查 status
+- [ ] 移除範圍一的 admin 入金端點（它是監聽器的替身，任務結束）
+- [ ] 私鑰/主種子用環境變數或 KMS，**勿進 git**
+- [ ] 鏈上餘額對帳（`07-2` §5）：交易所鏈上持有 ≥ 用戶內部餘額總和（Proof of Reserves 雛形）
+
+## M-撮合公平性與嚴格定序【進階／正式引擎，DEX 階段再做】　〔規格：04-1〕
 
 > 背景（M6 延伸）：目前撮合用「一單一 Celery 任務、丟 worker 池非同步跑」。M6 的交易對鎖 +
 > 冪等防護已保證**正確性**（不超賣、不雙重撮合、不 deadlock），但**沒保證公平性**：

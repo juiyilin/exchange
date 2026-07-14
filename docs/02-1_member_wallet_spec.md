@@ -1,7 +1,12 @@
-# 細部規格 — 用戶與錢包（member）
+# 細部規格 — 用戶與錢包（member）〔範圍一〕
 
 > 對應 app：`member`　主要 model：`UserProfileModel`、`WalletModel`
-> 上層文件：`00_overall_spec.md`
+> 上層文件：`00_overall_spec.md`　**範圍二續篇：`02-2_member_wallet_spec.md`**（充值地址、熱/冷錢包）
+>
+> 本檔只談**範圍一（純內部帳本，不碰鏈）**。
+> 注意：`WalletModel` 是**內部帳本（IOU）**，不是區塊鏈錢包——它在範圍二**依然不變**。
+> 範圍二新增的是「充值地址管理」這種**鏈上**的東西，收在 `02-2`。
+> （`UserProfileModel.address` 是**住址**，與鏈上地址無關，別搞混。）
 
 ## 1. 這個模組負責什麼
 
@@ -87,7 +92,7 @@
 用戶第一次碰到某幣別時自動建立該幣錢包（`get_or_create`），不用預先建好所有幣的錢包。
 
 ### 6.4 精度
-`decimal_places=2` 對 BTC 不夠，配合 `01_currency_spec.md` 的精度設計一起調整。
+`decimal_places=2` 對 BTC 不夠，配合 `01-1_currency_spec.md` 的精度設計一起調整。
 
 ### 6.5 身份組與權限（RBAC）
 
@@ -112,6 +117,6 @@
 
 ## 7. 常見坑
 
-- **餘額更新沒有原子性**：「讀餘額→改→存」這三步，如果兩個請求同時跑，會互相覆蓋（race condition），導致超賣。下單那段已經用了 `select_for_update()`，所有改餘額的地方都要這樣鎖。詳見 `04_matching_engine_spec.md` 的併發章節。
+- **餘額更新沒有原子性**：「讀餘額→改→存」這三步，如果兩個請求同時跑，會互相覆蓋（race condition），導致超賣。下單那段已經用了 `select_for_update()`，所有改餘額的地方都要這樣鎖。詳見 `04-1_matching_engine_spec.md` 的併發章節。
 - **直接改可用餘額卻忘了凍結**：扣可用一定要對應加凍結（或對外轉出），兩邊要一起改、包在同一個 `transaction.atomic()` 裡，不能只改一半。
 - **忘記 unique_together**：同一人同一幣建出兩個錢包，餘額就分裂了。
