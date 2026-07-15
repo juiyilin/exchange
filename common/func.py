@@ -1,5 +1,7 @@
-from django.contrib.auth.models import User
-import random
+"""
+專門放一些共用方法
+"""
+
 import uuid
 import pyotp
 from cryptography.fernet import Fernet

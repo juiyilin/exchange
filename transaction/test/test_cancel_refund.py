@@ -40,7 +40,7 @@ from currency.models import CurrencyModel, TradingPairModel
 from member.models import WalletModel
 from transaction.constants import OrderStatus, OrderType
 from transaction.models import OrderModel, TransactionModel
-from transaction.tasks import match_order
+from transaction.services import match_order
 
 
 def D(x):

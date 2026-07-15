@@ -94,14 +94,14 @@
 下單成功後，**在 request 裡直接呼叫撮合函式**跑完再回應。
 - 優點：好除錯，邏輯一條線、斷點好設、錯誤直接看得到。
 - 缺點：下單 API 會等撮合跑完才回，量大時慢。
-- 做法：把撮合邏輯寫成一個獨立函式（例如 `transaction/tasks.py` 的 `send_to_match_market`，現況是空殼），下單流程最後同步呼叫它。
+- 做法：把撮合邏輯寫成一個獨立函式（`transaction/services.py` 的 `match_order`），下單流程最後同步呼叫它。
 
 ### 階段二（進階）：非同步撮合
 下單只負責「驗證+凍結+存單」，然後 `send_to_match_market.delay()` 丟給 Celery，API 立刻回「訂單已建立」。Celery worker 在背景撮合。
 - 優點：API 秒回，符合真實架構。
 - 缺點：要顧 Celery/Redis 環境、除錯較麻煩、要處理「同一交易對同時被多個 worker 撮合」的併發問題。
 
-> 現況：`exchange/celery.py` 已設定好、`pyproject.toml` 已裝 celery/redis/django-celery-beat/results，`send_to_match_market` 已建好空函式、下單裡的 `.delay()` 呼叫被註解。基礎打好了，先用同步把邏輯做對，再打開非同步。
+> 現況：階段二已完成（M5）。分層為：核心邏輯 `match_order`/`cancel_order` 在 `transaction/services.py`（同步純函式，測試直接呼叫）；`transaction/tasks.py` 只放 Celery 進入點 `send_to_match_market`（`@shared_task` 薄殼，轉呼叫 services）。取消訂單**維持同步**（view 直接呼叫 service），理由見 TASKS.md「M6 收尾」。
 
 ## 6. 併發與原子性（進階，但要早點理解）
 

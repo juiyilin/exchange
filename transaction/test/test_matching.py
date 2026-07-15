@@ -3,7 +3,7 @@ M3 撮合引擎 — 單元測試（這是「規格」，不是實作）
 
 ============================================================================
 這份測試定義了「正確的撮合 + 結算」應該有的行為。
-撮合進入點 transaction.tasks.match_order(order_id, trading_pair_id)，讓底下每一條測試都變綠。
+撮合進入點 transaction.services.match_order(order_id, trading_pair_id)，讓底下每一條測試都變綠。
 
 ------- match_order(order_id, trading_pair_id) 的契約（測試假設它這樣運作）-------
 輸入：order_id 是一張「剛下、且已凍結好餘額」的訂單（taker）的 pk。
@@ -48,7 +48,7 @@ from transaction.constants import OrderStatus, OrderType
 from transaction.models import OrderModel, TransactionModel
 
 # 撮合進入點：傳入 taker 訂單的 pk，在交易內完成撮合與結算。
-from transaction.tasks import match_order
+from transaction.services import match_order
 
 
 def D(x):

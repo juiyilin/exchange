@@ -5,7 +5,7 @@ M6 — 撮合併發安全壓力測試。
 
 ★ M6 收尾（cancel 的交易對鎖）——本檔新增的要求，見 `docs/04-1_matching_engine_spec.md` §6.1：
 
-  1) 取消的核心邏輯要抽成可重用函式 `cancel_order(order_id, user)`（建議放 transaction/tasks.py，
+  1) 取消的核心邏輯要抽成可重用函式 `cancel_order(order_id, user)`（已落在 transaction/services.py，
      與 match_order 作伴），`OrderViewSet.cancel` 改成只是呼叫它的薄殼。
      為什麼：本檔原本自己複製了一份 view 的取消邏輯（_cancel_order），
      那等於「測試在測複製品，不是測線上真正跑的程式碼」——實作改了測試也不會紅。
@@ -47,7 +47,7 @@ from member.models import WalletModel
 from transaction.constants import OrderStatus, OrderType
 from transaction.exceptions import OrderNotCancelable
 from transaction.models import OrderModel, TransactionModel
-from transaction.tasks import cancel_order, match_order
+from transaction.services import cancel_order, match_order
 
 
 def D(x):

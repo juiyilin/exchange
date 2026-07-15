@@ -17,7 +17,7 @@
 
 ---
 
-## 目前進度（最後更新：**M-日誌與帳本 + M6 收尾 全部完成，全套 81 測試綠**。技術債已清空。下一步建議：M-KYC（順帶補「註冊時建初始錢包」），再來 M-RBAC）
+## 目前進度（最後更新：**M-結構調整完成——`match_order`/`cancel_order` 搬到 `transaction/services.py`，tasks.py 只剩 Celery 薄殼**。技術債已清空。下一步建議：M-KYC（順帶補「註冊時建初始錢包」），再來 M-RBAC）
 
 **節奏原則：先把「基本」功能全部做完，再進入「進階」。**（基本/進階的分類見 `00_overall_spec.md` 第 5 節功能總表）
 
@@ -289,6 +289,22 @@
 
 - [ ] 範圍二相關的一切 → 見下方 M8（規格已寫齊：`01-2` / `02-2` / `06-2` / `07-2`）
 - [ ] （選做進階）`TRADING_FEE` 手續費、manual 細分 reason（ADMIN_ADJUST/COMPENSATION/CORRECTION）+ `memo`/`operator` 欄位，見 `07-1` §3.2
+
+## M-結構調整 — 業務邏輯抽到 services.py　✅ 完成（2026-07-15）
+
+**做了什麼**：`match_order`、`cancel_order` 從 `transaction/tasks.py` 搬到新檔 `transaction/services.py`（業務邏輯層）。
+`tasks.py` 現在只放 Celery 進入點 `send_to_match_market`（`@shared_task` 薄殼，轉呼叫 services）。純搬家、不改邏輯，全套測試維持綠燈。
+
+- [x] 建 `transaction/services.py`（含模組 docstring：分層原則 + 全系統鎖順序 `TradingPair → Order → Wallet`）
+- [x] `tasks.py` / `views.py` / 測試檔 import 全部改指向 services（使用者完成）
+- [x] 過時註解與規格同步：`test_concurrency.py`、`test_matching.py`、`04-1` §5（Claude 完成）
+
+> **為什麼**：`tasks.py` 的定位是「哪些工作在背景跑」，但 `cancel_order` 是 view 同步呼叫的、`match_order` 是撮合核心——
+> 放在 tasks.py 會誤導讀者以為它們是非同步的。分層後：services.py 回答「這個 app 能做什麼」，tasks.py 回答「哪些事在背景跑」。
+> 對日後轉 DEX 也友善：屆時把觸發方式從 Celery 換成鏈上事件索引器，只換進入點、核心邏輯不動。
+>
+> **注意**：本檔上方舊里程碑（M3/M5/M6 收尾）提到的 `transaction/tasks.py` 位置是當時的事實，不回頭改；
+> 現況一律以本條與 `04-1` §5 為準。
 
 ## M8（升級到範圍二）— 測試鏈入金/出金　〔規格：01-2, 02-2, 06-2, 07-2〕　📄 設計已完成，未實作
 

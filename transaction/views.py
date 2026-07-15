@@ -4,9 +4,10 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 from transaction.exceptions import OrderNotCancelable
-from transaction.tasks import cancel_order, send_to_match_market
+from transaction.tasks import send_to_match_market
 from .models import OrderModel
 from .serializers import OrderCreateUpdateSerializer, OrderSerializer
+from .services import cancel_order
 from ledger.models import LedgerEntryModel
 
 
