@@ -1,15 +1,12 @@
-import random
-
 from django.db import transaction
 from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
-from transaction.tasks import send_to_match_market
-from .constants import OrderStatus
+from transaction.exceptions import OrderNotCancelable
+from transaction.tasks import cancel_order, send_to_match_market
 from .models import OrderModel
 from .serializers import OrderCreateUpdateSerializer, OrderSerializer
-from member.models import WalletModel
 from ledger.models import LedgerEntryModel
 
 
@@ -52,22 +49,19 @@ class OrderViewSet(ModelViewSet):
         )
 
     @action(methods=['post'], detail=True)
-    @transaction.atomic
     def cancel(self, request, pk=None):
         """
         取消
-        1. 全部成交、已取消狀態的單子不能取消
+        - 全部成交、已取消狀態的單子不能取消
+        流程
+        1. 先鎖幣對，再鎖單
         2. 把單子改成已取消後，處理多餘的凍結餘額
         """
         try:
-            instance = OrderModel.objects.select_for_update().get(id=pk, user=request.user)
+            cancel_order(pk, request.user)
         except OrderModel.DoesNotExist:
             raise serializers.ValidationError('該單不存在')
-        if instance.status in [OrderStatus.FULLY_FILLED, OrderStatus.CANCELED]:
-            raise serializers.ValidationError(f'本單{instance.get_status_display()}，無法取消')
+        except OrderNotCancelable as e:
+            raise serializers.ValidationError(str(e))
 
-        instance.status = OrderStatus.CANCELED
-        instance.save()
-
-        WalletModel.objects.release_frozen(instance)
         return Response({"message": "Order canceled successfully"})

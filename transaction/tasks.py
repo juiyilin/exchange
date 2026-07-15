@@ -1,6 +1,7 @@
 from celery import shared_task
 from member.models import WalletModel
 from currency.models import TradingPairModel
+from transaction.exceptions import OrderNotCancelable
 from .models import OrderModel, TransactionModel
 from .constants import OrderType, OrderStatus
 from django.db import transaction
@@ -69,3 +70,21 @@ def match_order(order_id, trading_pair_id):
         taker.mark_taker_status(taker_remaining)
         WalletModel.objects.release_frozen(taker)
     return 
+
+def cancel_order(order_id, user):
+    with transaction.atomic():
+
+        order = OrderModel.objects.get(id=order_id, user=user)
+        trading_pair_id = order.trading_pair_id
+        TradingPairModel.objects.select_for_update().get(id=trading_pair_id)
+
+
+        order = OrderModel.objects.select_for_update().get(id=order_id, user=user)
+        if order.status in [OrderStatus.FULLY_FILLED, OrderStatus.CANCELED]:
+            raise OrderNotCancelable(order)
+
+        order.status = OrderStatus.CANCELED
+        order.save()
+
+        WalletModel.objects.release_frozen(order)
+    return

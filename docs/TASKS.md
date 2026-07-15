@@ -17,7 +17,7 @@
 
 ---
 
-## 目前進度（最後更新：**M-日誌與帳本 全部完成** — LedgerEntryModel + 四套用點記帳 + 對帳不變量 + DepositWithdrawModel/出入金端點,測試全綠。下一步建議:還 cancel 交易對鎖的技術債,或進 M-KYC）
+## 目前進度（最後更新：**M-日誌與帳本 + M6 收尾 全部完成，全套 81 測試綠**。技術債已清空。下一步建議：M-KYC（順帶補「註冊時建初始錢包」），再來 M-RBAC）
 
 **節奏原則：先把「基本」功能全部做完，再進入「進階」。**（基本/進階的分類見 `00_overall_spec.md` 第 5 節功能總表）
 
@@ -32,10 +32,9 @@
 **✅ v0.1「基本」+ M4 生命週期 + M5 非同步化 + STP + M7 認證 + M6 併發安全皆完成。下一步建議 M-RBAC、M-KYC、或 M-日誌與帳本。**
 
 已完成（M6）：交易對序列化鎖（擋 deadlock）、冪等撮合（擋重複投遞超賣）、`release_frozen` 改 F()、錢包 CheckConstraint、併發壓力測試。
-已知技術債（屬進階，之後處理）：
+已完成（M6 收尾）：cancel 也走交易對閘門，鎖順序全系統統一為 `pair → order → wallet`。
 
-- M7 已補上認證；`get_random_user()` 已移除、改綁 `request.user`。
-- cancel 尚未取交易對鎖（M6 收尾選做，見 M6 區塊末）。
+**技術債：目前已清空。**（M7 的 `get_random_user()` 已移除、改綁 `request.user`；M6 的 cancel 鎖已補。）
 
 已完成（M4）：取消訂單、多凍結退款、終態不可變、擋改單（PUT/PATCH→405）。
 已完成（M5）：下單 `.delay()` 非同步撮合、Redis+worker、commit 後送任務、測試 eager。
@@ -151,7 +150,48 @@
 > - **CheckConstraint 立大功**：cross-fire 把「重複撮合超賣」逼出來時，是 `frozen_non_negative` 在 DB 層當場攔下（凍結變 -1），沒讓髒資料寫進去。三層（鎖／原子性／不變量）協作的範例。
 > - **測試限制**：併發測試需 `TransactionTestCase` + **PostgreSQL**（SQLite 測不到列鎖）；每執行緒自帶連線、結束 `connection.close()`；用 `Barrier` 對齊起跑、收集 thread 例外。建議加 `@skipUnless(connection.vendor=='postgresql')` 免得 SQLite 假綠。
 > - 引擎是**逐筆連續撮合**（非集合競價）；Celery 只是搬到背景跑，仍一張一張即時撮。
-> - 待加固（選做）：cancel 目前未取交易對鎖，與撮合在「訂單↔錢包」間理論上仍可能繞環；要徹底一致可讓 cancel 也先鎖交易對。
+> - ~~待加固（選做）：cancel 目前未取交易對鎖~~ → **已排入「M6 收尾」，見下方區塊。**
+
+## M6 收尾 — cancel 的交易對鎖【進階】　〔規格：04-1 §6.1〕　✅ 完成（全套 81 測試綠）
+
+**目標**：把 M6 留下的最後一個坑補掉——讓 cancel 與 match 遵守**同一個鎖順序**，
+從架構上消滅繞環的可能。順便修掉一個測試品質問題。
+
+- [x] `04-1` §6.1 新增**鎖順序鐵則**：`TradingPair（閘門） → Order → Wallet`，所有訂單簿寫入者都要遵守;
+      §6.2 補述「錢包為何不靠鎖而靠 `F()`」（錢包不受 pair 閘門保護——跨交易對、出入金都會碰它）
+- [x] 測試 `transaction/test/test_concurrency.py`：改用真正的 `cancel_order`（刪掉原本複製 view 邏輯的
+      `_cancel_order`）、新增 `test_cancel_match_stress_no_deadlock`、新增 `CancelOrderContractTest`
+- [x] `transaction/exceptions.py`：`OrderNotCancelable(order)`（純 `Exception`，帶著訂單、訊息在業務層產生）
+- [x] `transaction/tasks.py`：抽出 `cancel_order(order_id, user)`，鎖順序 **pair → order → wallet**
+- [x] `OrderViewSet.cancel` 改成薄殼：呼叫 `cancel_order`，`DoesNotExist` 與 `OrderNotCancelable` 都轉 400
+
+> **實作重點 / 踩過的坑（給接手者）**：
+>
+> - **鎖 pair 的先有雞後有蛋**：要鎖 pair 得先知道是哪個 pair，但又不能先鎖訂單（順序就反了）。
+>   解法：**先「不鎖」讀出 `trading_pair_id`**（`trading_pair` 建立後永不改變，這個預讀安全——
+>   它只決定「要鎖哪一列」，真正的授權與狀態判斷都在鎖到之後才做），再鎖 pair、再 `select_for_update` 鎖訂單重檢。
+> - **取消絕不可非同步**：曾誤寫成 `cancel_order.delay(...)`。`.delay()` 是射後不理、立刻回傳，
+>   `OrderNotCancelable` 永遠不會被 view 接到 → 終態的單也會回 200。而且 `cancel_order` 根本不是
+>   `@shared_task`，沒有 `.delay` → `AttributeError` → 500。撮合非同步是因為它慢（要掃簿、連續成交）；
+>   **取消只鎖一列、改狀態、退款，快且必須同步回報成敗**。
+> - **例外要繼承純 `Exception`，不要繼承 DRF 的 `APIException`**：`cancel_order` 是業務層純函式，
+>   會被併發測試/Celery/management command 呼叫，不該挾帶 HTTP 的 `status_code`。
+>   **業務層說「不能取消」，view 層才決定「那對外回 400」**。同理 `tasks.py` 不該 import DRF。
+> - **單一真相來源**：`test_concurrency.py` 原本自己複製了一份 view 的取消邏輯，
+>   等於「測試在測複製品、不是測線上真正跑的程式碼」。抽成函式後 view 與測試呼叫同一個 `cancel_order`。
+> - **不要為了 `balance_after` 把 `transfer_asset`/`release_frozen` 的 `F()` 改回「讀-改-寫」**：
+>   錢包列**不受交易對閘門保護**（BTC/USDT 與 ETH/USDT 共用同一個 USDT 錢包;出入金也會碰），
+>   改回去會在那些路徑掉更新。`F()` 是對的，要 `balance_after` 就 update 後重讀（`07-1` §6.1）。
+> - **誠實話**：deadlock 是時序相依的，壓力測試不保證每次重現。那條測試是**回歸網**，
+>   不是「沒紅就證明鎖對了」。鎖順序的正確性主要靠架構保證（§6.1）。
+
+> **為什麼要抽成函式**：原本 `test_concurrency.py` 自己複製了一份 view 的取消邏輯，
+> 等於「測試在測複製品、不是測線上真正跑的程式碼」——實作改了測試也不會紅。抽成單一真相來源後，
+> view 與測試呼叫同一個 `cancel_order`。（`match_order` 本來就是這種純函式，兩者作伴。）
+>
+> **不要順手把 `transfer_asset`/`release_frozen` 的 `F()` 改回「讀-改-寫」**：錢包列**不受交易對閘門保護**
+> （BTC/USDT 與 ETH/USDT 共用同一個 USDT 錢包;出入金也會碰），改回讀-改-寫會在那些路徑掉更新。
+> `F()` 是對的，要 `balance_after` 就 update 後重讀（`07-1` §6.1）。
 
 ## M7 — 認證（補技術債）　〔規格：02-1〕　✅ 完成（JWT + 強制 TOTP 2FA + 註冊;54 測試綠）
 
