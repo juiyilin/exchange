@@ -17,7 +17,15 @@
 
 ---
 
-## 目前進度（最後更新：**M-結構調整完成——`match_order`/`cancel_order` 搬到 `transaction/services.py`，tasks.py 只剩 Celery 薄殼**。技術債已清空。下一步建議：M-KYC（順帶補「註冊時建初始錢包」），再來 M-RBAC）
+## 目前進度（最後更新：**KYC-A 第一步的規格 `08-1_kyc_spec.md` 與測試 `member/test/test_kyc.py` 已由 Claude 寫完（同步更新 `test_withdraw.py` 因應出金閘門）。下一步：使用者依規格 §9 checklist 實作，讓測試變綠**）
+
+> **本輪定案**：KYC-A 拆成兩步（見下方 M-KYC 區塊）。**第一步**＝欄位 + 狀態機 + admin 審核 + 出金閘門（文字欄位帶過證件，不碰物件儲存）;**第二步**＝MinIO + 證件照上傳，之後再做。
+>
+> **接手點（給使用者 / 下一個 AI）**：
+> 1. 先讀 `docs/08-1_kyc_spec.md`（尤其 §3 欄位、§4 狀態機、§5 API、§6 出金閘門、§9 checklist）。
+> 2. 照 §9 checklist 實作：`member/constants.py`（KycStatus）→ `UserProfileModel` 加欄位 + migration → serializers → `KycViewSet` → urls 註冊 → `withdraw` 加閘門。
+> 3. 跑 `member/test/test_kyc.py` 讓它全綠，並確認 `test_withdraw` / `test_2fa` / `test_register_wallets` / `test_user_permissions` 不退步。
+> 4. 全綠後回來把下方 KYC-A「第一步」的 `[ ]` 打勾、更新本區塊。
 
 **節奏原則：先把「基本」功能全部做完，再進入「進階」。**（基本/進階的分類見 `00_overall_spec.md` 第 5 節功能總表）
 
@@ -227,16 +235,91 @@
 - [ ] 釐清「角色層（能做哪種 CRUD）」與「擁有權層（只能碰自己的）」兩維度一起生效
 - [ ] 驗證：不同角色帳號對同一端點的 CRUD 權限符合預期
 
-## M-KYC（身份驗證 + 註冊上線流程）【進階】　〔規格：02-1〕　待做
+## M-KYC 暖身 — 註冊建錢包 + UserViewSet 權限收斂【進階】　〔規格：02-1 §4.1/§4.2/§6.5〕　✅ 完成
 
-> 註冊流程與 KYC 一起做，避免改兩次。M7-A 暫時把註冊豁免延到這裡。
+> M7 留下的兩條尾巴，與 KYC 本體無關但被歸在同一里程碑。獨立、小、且第 2 點是真的資安洞。
+> **Claude 寫測試 + 規格（02-1 §4 全面同步實作），使用者實作，全套測試綠。**
+
+- [x] 測試 `member/test/test_register_wallets.py`（10 條：勾選建錢包、餘額為 0、選填、去重、非法幣別回滾、不掛錯人、回應格式不變）
+- [x] 測試 `member/test/test_user_permissions.py`（10 條：匿名 401、一般用戶 403、admin 200、密碼不外洩、註冊不被誤鎖）
+- [x] `RegisterSerializer` 加 `wallet_currency_ids`（`PrimaryKeyRelatedField(many=True)`、required=False、write_only），`create()` 內 `set()` 去重 + `bulk_create` 建錢包
+- [x] `UserViewSet` 掛 `permission_classes = [IsAdminUser]`，刪掉那行 `# TODO:`
+- [x] 規格 `02-1` §3/§4/§6 全面同步實作（補 2FA 欄位、刪 get_random_user 技術債、認證/帳本/自動建錢包標為已完成、新增 §4.1 建錢包/§4.2 原子性/§4.3 /me/ 缺口）
+- [x] 驗證：兩支新測試全綠，既有 test_2fa/test_withdraw/test_models 不退步
+
+> **實作重點（給接手者）**：
+>
+> - `wallet_currency_ids` 用 `PrimaryKeyRelatedField(many=True, queryset=CurrencyModel.objects.all())`：
+>   DRF 在 `is_valid()` 階段就驗幣別存在、非法 id 回 400 → **fail fast**，User 根本不會被建。
+>   所以 `@transaction.atomic` 的回滾在此情境其實不會被觸發（驗證前置了），但它是更深一層的保險。
+> - `set(...)` 能對 model 實例去重，是因為 Django model 的 hash 基於 pk（已存檔、有 pk 才成立）。
+> - 新錢包餘額走 model 預設 0，沒有白送餘額。
+
+> **設計決策（本輪定案）**：
+>
+> - **註冊時「勾選」要開哪些錢包，不寫死 USDT/BTC**。理由：幣別是資料、不是常數。
+>   寫死 `code="USDT"` 會在上架第三種幣時回頭咬人，且測試環境沒建該幣別時註冊會直接炸。
+>   讓呼叫端指定 → 註冊邏輯與「目前上架哪些幣」解耦。
+> - 欄位用 `CurrencyModel.id`（與 `WithdrawSerializer`/`DepositSerializer` 的 `asset_type_id` 風格一致）。
+> - 新錢包餘額必為 0 — **註冊不等於入金**，白送餘額等同憑空鑄錢（同 07-1 §4.1 入金 admin-only 的理由）。
+> - `IsAdminUser` 是 **02-1 §6.5 的「角色層」**（能做哪種操作），與 `WalletViewSet.get_queryset`
+>   的「擁有權層」（只能碰自己的）是兩個正交維度。本階段先用最粗的角色（is_staff），
+>   完整 RBAC（Django Group）留給 M-RBAC。
+> - **`/me/` 端點刻意不做**：鎖成 admin-only 後一般用戶無法查自己資料，正解是加
+>   `GET /api/user/user/me/`。但 KYC 階段會需要「查自己的 KYC 狀態」，屆時一起設計免得改兩次。
+
+## M-KYC（身份驗證）【進階】　〔規格：02-1〕　待做
+
+> **KYC-A / KYC-B 兩階段切分（本輪定案）**，避免一次改太多東西。
+
+### KYC-A：欄位 + 狀態機 + admin 審核 + 出金閘門（＋之後補 MinIO）
+
+> **本輪拆成兩步（定案）**：先把「狀態流程 + 出金閘門」跑通（第一步），MinIO 物件儲存與證件照上傳當第二步。
+> 理由：物件儲存是一整套正交的新基礎設施，與狀態機分開學比較不會亂。**規格：獨立 `08-1_kyc_spec.md`**（依命名規則 KYC 是全新主題，遞增到 08）。
 
 - [x] 註冊 API（免登入 RegisterView，建 User + Profile + TOTP 密鑰）— M7-B 已做
-- [ ] 註冊時順帶建初始錢包（USDT/BTC）;list/retrieve 限 IsAdminUser
-- [ ] KYC 欄位/狀態：身分證件、法定姓名、地址證明等;狀態機 unverified → pending → approved / rejected
-- [ ] 文件上傳與審核流程（送審、人工/自動審核、結果回寫）
-- [ ] 風險閘門：未通過 KYC 限制敏感操作（如出金、額度上限）
-- [ ] 驗證：未驗證用戶被擋在受限操作之外;通過後解鎖
+- [x] **規格**：Claude 撰寫 `docs/08-1_kyc_spec.md`（§3 欄位、§4 狀態機、§5 API、§6 出金閘門、§8 第二步預留、§9 checklist）
+- [x] **測試**：Claude 撰寫 `member/test/test_kyc.py`（狀態機/送審/admin 審核/查自己/出金閘門）+ 更新 `test_withdraw.py`（setUp 給 APPROVED profile）
+
+**第一步（狀態機 + 出金閘門）— 使用者實作，讓測試變綠：**
+
+- [ ] `member/constants.py`：新增 `KycStatus`（UNVERIFIED/PENDING/APPROVED/REJECTED）
+- [ ] `UserProfileModel` 加 KYC 欄位（法定姓名/證件號碼/生日/國籍 + status + reviewed_by/at + reject_reason）;`makemigrations && migrate`
+- [ ] serializers（送審綁 request.user、查自己遮罩 id_number）
+- [ ] `KycViewSet`：送審（狀態守衛）、`me/`(查自己)、`approve`/`reject`(IsAdminUser，記 who/when)；`urls.py` 註冊 `r"kyc"`
+- [ ] **出金閘門**：`WalletViewSet.withdraw` 開頭加「未 APPROVED → 403」，動錢之前
+- [ ] 驗證：`member/test/test_kyc.py` 全綠;`test_withdraw`/`test_2fa`/`test_register_wallets`/`test_user_permissions` 不退步
+
+**第二步（MinIO + 證件上傳）— 規格 §8 已預留，之後再做：**
+
+- [ ] **MinIO 物件儲存**：Docker 起 MinIO、`django-storages` + `boto3`、私有 bucket、預簽名 URL
+- [ ] `KycDocumentModel`（一對多）+ 證件文件上傳（正反面 + 自拍）
+- [ ] （待辦）`id_number` 明文改 Fernet 加密或查詢遮罩（規格 §3.2 / §7）
+
+### KYC-B：下單閘門 + 分級額度（之後）
+
+- [ ] 下單閘門（會牽動現有 25+ 條交易測試，每個測試用戶都得先過 KYC）
+- [ ] 分級額度 Tier 0/1/2：每日出金上限，需用 `LedgerEntryModel` 算時間區間累計
+
+> **決策理由 / KYC 背景知識（給接手者）**：
+>
+> - **KYC 是法規逼的，不是產品選擇**。隸屬 AML/CFT（反洗錢／打擊資恐）框架，
+>   源頭是 FATF 建議，各國立法落地（台灣：《洗錢防制法》，VASP 需完成洗錢防制法令遵循聲明）。
+>   設計邏輯不是「對用戶方便」，而是**「錢要離開系統時，能不能對監管機關交代這個人是誰」**。
+> - **心法：看「錢的流向」，不是看「操作的重要性」**：
+>   - **出金一定擋** — 錢離開系統，洗錢的最後一哩路，法規盯最緊。
+>   - **入金通常不擋**（幣圈）— 錢進來沒有洗錢風險，你想跑才有。但**法幣入金一定擋**（要串銀行）。
+>   - **下單早期不擋、2021 後主流所多半擋** — 監管收緊，「入金→交易→提幣」整條都是管道。
+>   - **額度分級是主流** — 不是布林值，而是 RBA（風險基礎方法，FATF 核心原則）：風險越高查越嚴。
+> - **分級 KYC 典型分層**：Tier 0（僅 email）可入金看行情、不能提幣；Tier 1（身分證+自拍）可交易、
+>   有每日提幣上限；Tier 2（地址證明+財力來源）高額或無上限。
+>   另有 **EDD**（加強盡職審查，對 PEP 政治人物/高風險國家/大額異常）與 **KYT**（持續監控交易行為）。
+> - **為何 KYC-A 只擋出金**：法規底線、非做不可，且 `withdraw` 函式已在，加閘門只需幾行。
+>   下單閘門技術上不難但要改動大量既有測試，切開做比較不會亂。
+>   入金現在是 admin-only 的假端點（監聽器替身），擋它意義不大。
+> - **MinIO 是新的基礎設施**：多一個 Docker 容器（同 `exchange-redis` 模式），
+>   Django 端 `django-storages` + `boto3`、S3 相容 endpoint。
+>   **證件照片是全系統最敏感的資料** — bucket 必須私有、絕不可走 public URL，用預簽名 URL 存取。
 
 ## M-日誌與帳本【進階】　〔規格：07-1〕　✅ 全部完成（LedgerEntry + DepositWithdrawModel，測試全綠）
 
