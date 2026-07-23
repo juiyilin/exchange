@@ -3,6 +3,7 @@ import pyotp
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import UserProfileModel, WalletModel
+from currency.models import CurrencyModel
 from common.func import verify_totp, generate_encrypted_totp_secret
 from exchange.settings import ISSUER
 
@@ -11,6 +12,7 @@ class RegisterSerializer(serializers.ModelSerializer):
     phone_number = serializers.CharField(write_only=True)
     address = serializers.CharField(write_only=True)
     password = serializers.CharField(write_only=True)
+    wallet_currency_ids = serializers.PrimaryKeyRelatedField(required=False, write_only=True, many=True, queryset=CurrencyModel.objects.all())
 
     class Meta:
         model = User
@@ -19,6 +21,8 @@ class RegisterSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         phone_number = validated_data.pop("phone_number")
         address = validated_data.pop("address")
+        asset_types = set(validated_data.pop('wallet_currency_ids', []))
+
         user = User.objects.create_user(**validated_data)
 
         secret, encrypted_secret = generate_encrypted_totp_secret()
@@ -27,6 +31,9 @@ class RegisterSerializer(serializers.ModelSerializer):
         )
         self.validated_data['secret'] = secret
         self.validated_data['issuer'] = ISSUER
+        if asset_types:
+            wallets = [WalletModel(user=user, asset_type=asset_type) for asset_type in asset_types]
+            WalletModel.objects.bulk_create(wallets)
         return user
 
     def to_representation(self, instance):
