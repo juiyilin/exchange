@@ -26,9 +26,11 @@ class RegisterView(CreateModelMixin, UpdateModelMixin, GenericViewSet):
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):
+        """輸入基本資料註冊，回傳2FA的資訊，預先建立勾選錢包"""
         return super().create(request, *args, **kwargs)
 
     def update(self, request, *args, **kwargs):
+        """使用者在驗證app新增2FA資訊後，將app中顯示的6位數數字與使用者帳號傳到後端啟用"""
         serializer = TwoFactorEnableSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
@@ -40,7 +42,7 @@ class LoginView(TokenObtainPairView):
 
 
 class UserViewSet(ModelViewSet):
-    # TODO:
+    permission_classes = [IsAdminUser]
     queryset = User.objects.select_related("profile").all()
     serializer_class = UserListSerializer
 
