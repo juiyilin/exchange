@@ -17,15 +17,17 @@
 
 ---
 
-## 目前進度（最後更新：**KYC-A 第一步的規格 `08-1_kyc_spec.md` 與測試 `member/test/test_kyc.py` 已由 Claude 寫完（同步更新 `test_withdraw.py` 因應出金閘門）。下一步：使用者依規格 §9 checklist 實作，讓測試變綠**）
+## 目前進度（最後更新：**✅ KYC-A 第一步實作完成——欄位 + 兩層模型（`UserProfileModel` 當前狀態層 + append-only `KycRecordModel`）+ 狀態機 + admin approve/reject/revoke/reverify + 出金閘門，全套 69 測試綠。下一步：KYC-A 第二步（MinIO + 證件上傳）或先評估其他里程碑**）
 
-> **本輪定案**：KYC-A 拆成兩步（見下方 M-KYC 區塊）。**第一步**＝欄位 + 狀態機 + admin 審核 + 出金閘門（文字欄位帶過證件，不碰物件儲存）;**第二步**＝MinIO + 證件照上傳，之後再做。
+> **KYC-A 拆兩步**：**第一步（✅ 完成）**＝欄位 + 狀態機 + admin 審核 + 出金閘門（文字欄位帶過證件）;**第二步（未做）**＝MinIO + 證件照上傳，規格 `08-1` §8 已預留。
 >
-> **接手點（給使用者 / 下一個 AI）**：
-> 1. 先讀 `docs/08-1_kyc_spec.md`（尤其 §3 欄位、§4 狀態機、§5 API、§6 出金閘門、§9 checklist）。
-> 2. 照 §9 checklist 實作：`member/constants.py`（KycStatus）→ `UserProfileModel` 加欄位 + migration → serializers → `KycViewSet` → urls 註冊 → `withdraw` 加閘門。
-> 3. 跑 `member/test/test_kyc.py` 讓它全綠，並確認 `test_withdraw` / `test_2fa` / `test_register_wallets` / `test_user_permissions` 不退步。
-> 4. 全綠後回來把下方 KYC-A「第一步」的 `[ ]` 打勾、更新本區塊。
+> **第一步落地重點（實作已完成）**：
+> - 兩層模型：`UserProfileModel.latest_kyc_status`（當前）+ `KycRecordModel`（append-only 歷史，`event_status` 記事件、含送審快照與 operator）。
+> - 狀態機 `UNVERIFIED→VERIFYING→APPROVED/REJECTED`，`REJECTED→VERIFYING`（重送）、`APPROVED→UNVERIFIED`（`revoke` 撤銷 / `reverify` 要求重驗，兩事件分開、reason 必填）。
+> - 出金閘門：`withdraw` 未 `APPROVED` → 403。
+> - 踩過的坑（已修）：送審守衛原本讀 `request.user.profile`（反向 OneToOne 會被 force_authenticate 重用的 user 快取），改成讀「等下要更新的同一個 `instance`」才正確擋掉重送。
+>
+> **下一步接手點**：評估要不要做 KYC-A 第二步（MinIO，規格 §8），或先做其他里程碑（M-RBAC / KYC-B 下單閘門與分級 / 撮合公平性）。KYC-B 之後才碰。
 
 **節奏原則：先把「基本」功能全部做完，再進入「進階」。**（基本/進階的分類見 `00_overall_spec.md` 第 5 節功能總表）
 
@@ -94,7 +96,7 @@
 - [x] `select_for_update` 鎖錢包；錢包不存在 / quantity≤0 / 可用不足 各回 400（餘額不變）
 - [x] 通過 → `available_balance -= quantity`，回 200。只動 available、不碰 frozen；Decimal
 - [x] 不寫紀錄/log（延到後續/範圍 2）
-- [x] 驗證：`member/test/test_withdraw.py`（出金成功、領光、超額擋、凍結不可領、≤0 擋、無錢包擋）
+- [x] 驗證：`member/tests/test_withdraw.py`（出金成功、領光、超額擋、凍結不可領、≤0 擋、無錢包擋）
 
 > ✅ v0.1 的「基本」功能全部完成（M1 幣別錢包、M2 下單凍結、M3 撮合結算、模擬入金/出金）。
 > 測試現都在各 app 的 `test/` 資料夾下。接下來進入「進階」階段（M4 以後）。
@@ -218,7 +220,7 @@
 - [x] 註冊端點：`POST /api/user/register/`（免登入），建 User+Profile、產生密鑰、回 secret + otpauth QR 連結
 - [x] 登入加第二因素：`LoginSerializer`(subclass TokenObtainPairSerializer)，帳密過後驗 TOTP 才發 JWT
 - [x] 密鑰加密儲存：`encrypted_totp_secret`(BinaryField) 用 Fernet 加密;設定 FERNET_KEY、ISSUER
-- [x] 測試：`member/test/test_2fa.py`（8 條，pyotp 自算碼）;全套 54 條綠
+- [x] 測試：`member/tests/test_2fa.py`（8 條，pyotp 自算碼）;全套 54 條綠
 
 > 實作重點 / 踩過的坑：
 >
@@ -240,8 +242,8 @@
 > M7 留下的兩條尾巴，與 KYC 本體無關但被歸在同一里程碑。獨立、小、且第 2 點是真的資安洞。
 > **Claude 寫測試 + 規格（02-1 §4 全面同步實作），使用者實作，全套測試綠。**
 
-- [x] 測試 `member/test/test_register_wallets.py`（10 條：勾選建錢包、餘額為 0、選填、去重、非法幣別回滾、不掛錯人、回應格式不變）
-- [x] 測試 `member/test/test_user_permissions.py`（10 條：匿名 401、一般用戶 403、admin 200、密碼不外洩、註冊不被誤鎖）
+- [x] 測試 `member/tests/test_register_wallets.py`（10 條：勾選建錢包、餘額為 0、選填、去重、非法幣別回滾、不掛錯人、回應格式不變）
+- [x] 測試 `member/tests/test_user_permissions.py`（10 條：匿名 401、一般用戶 403、admin 200、密碼不外洩、註冊不被誤鎖）
 - [x] `RegisterSerializer` 加 `wallet_currency_ids`（`PrimaryKeyRelatedField(many=True)`、required=False、write_only），`create()` 內 `set()` 去重 + `bulk_create` 建錢包
 - [x] `UserViewSet` 掛 `permission_classes = [IsAdminUser]`，刪掉那行 `# TODO:`
 - [x] 規格 `02-1` §3/§4/§6 全面同步實作（補 2FA 欄位、刪 get_random_user 技術債、認證/帳本/自動建錢包標為已完成、新增 §4.1 建錢包/§4.2 原子性/§4.3 /me/ 缺口）
@@ -279,16 +281,23 @@
 
 - [x] 註冊 API（免登入 RegisterView，建 User + Profile + TOTP 密鑰）— M7-B 已做
 - [x] **規格**：Claude 撰寫 `docs/08-1_kyc_spec.md`（§3 欄位、§4 狀態機、§5 API、§6 出金閘門、§8 第二步預留、§9 checklist）
-- [x] **測試**：Claude 撰寫 `member/test/test_kyc.py`（狀態機/送審/admin 審核/查自己/出金閘門）+ 更新 `test_withdraw.py`（setUp 給 APPROVED profile）
+- [x] **測試**：Claude 撰寫 `member/tests/test_kyc.py`（狀態機/送審/admin 審核/查自己/出金閘門）+ 更新 `test_withdraw.py`（setUp 給 APPROVED profile）
 
-**第一步（狀態機 + 出金閘門）— 使用者實作，讓測試變綠：**
+**第一步（狀態機 + 兩層模型 + 出金閘門）— ✅ 使用者實作完成，全套 69 測試綠：**
 
-- [ ] `member/constants.py`：新增 `KycStatus`（UNVERIFIED/PENDING/APPROVED/REJECTED）
-- [ ] `UserProfileModel` 加 KYC 欄位（法定姓名/證件號碼/生日/國籍 + status + reviewed_by/at + reject_reason）;`makemigrations && migrate`
-- [ ] serializers（送審綁 request.user、查自己遮罩 id_number）
-- [ ] `KycViewSet`：送審（狀態守衛）、`me/`(查自己)、`approve`/`reject`(IsAdminUser，記 who/when)；`urls.py` 註冊 `r"kyc"`
-- [ ] **出金閘門**：`WalletViewSet.withdraw` 開頭加「未 APPROVED → 403」，動錢之前
-- [ ] 驗證：`member/test/test_kyc.py` 全綠;`test_withdraw`/`test_2fa`/`test_register_wallets`/`test_user_permissions` 不退步
+> **兩層設計（見規格 §3.4）**：`UserProfileModel` 只留「當前狀態」（一人一份、會覆寫），
+> 另開 append-only 的 `KycRecordModel`（一人多筆）記完整歷史——同 `WalletModel` vs `LedgerEntryModel`。
+> 「重新 KYC」＝被拒重送（覆寫當前 + 加 SUBMITTED 快照）或 staff `revoke`（撤銷）／`reverify`（要求重驗）打回（APPROVED→UNVERIFIED，只差記的事件）。
+
+- [x] `member/constants.py`：新增 `KycStatus`（狀態）＋ `KycEvent`（SUBMITTED/APPROVED/REJECTED/REVOKED/REVERIFY_REQUIRED）
+- [x] `UserProfileModel` 加「當前狀態層」欄位（latest_kyc_status + 法定姓名/證件號碼/生日/國籍）;`makemigrations && migrate`
+- [x] `KycRecordModel`（append-only，`save()`/`delete()` 擋，照抄 `LedgerEntryModel`）
+- [x] serializers（`serializers/user_kyc.py`：送審綁 request.user、查自己遮罩 id_number、record 歷史）
+- [x] `KYCViewSet`：送審、`me/`、`approve`/`reject`/`revoke`/`reverify`(IsAdminUser；revoke/reverify 共用 `do_kyc` helper 只差 event_status)；每動作在同一 atomic 改 profile + 寫 record；`urls.py` 註冊 `r"kyc"`
+- [x] **出金閘門**：`WalletViewSet.withdraw` 未 APPROVED → 403，動錢之前
+- [x] 驗證：全套 69 測試綠（含 `test_kyc` / `test_withdraw` / `test_2fa` / `test_register_wallets` / `test_user_permissions`）
+
+> **踩過的坑（給接手者）**：送審守衛一開始讀 `request.user.profile`（反向 OneToOne），在測試裡被 `force_authenticate` 重用的同一個 user 物件快取住 → 第二次送審讀到舊的 UNVERIFIED、擋不掉重送（回 201）。修法：守衛改讀「等下要更新的同一個 `instance = queryset.get(user=...)`」。通則：讀來判斷的列 = 要改的列（真要防併發還會 `select_for_update`，見 M6）。
 
 **第二步（MinIO + 證件上傳）— 規格 §8 已預留，之後再做：**
 
@@ -300,6 +309,8 @@
 
 - [ ] 下單閘門（會牽動現有 25+ 條交易測試，每個測試用戶都得先過 KYC）
 - [ ] 分級額度 Tier 0/1/2：每日出金上限，需用 `LedgerEntryModel` 算時間區間累計
+- [ ] （待評估）**自動定期覆審**：Celery beat 定期掃描已通過但過期者 → 打回 `UNVERIFIED` 並寫 record（複用 `REVERIFY_REQUIRED` 或加 `EXPIRED`）。到期日若週期固定可由「最近 `APPROVED` record 的 `created_at` + 週期」推算，不必存欄位；只有週期依風險分級而異（EDD/RBA）才需在 profile 存 `kyc_next_review_at`。詳見 `08-1` §4.1 備忘。目前 KYC-A 的 `reverify` 是手動觸發，已足夠。
+- [ ] （待評估）**雙人覆核 / 四眼原則（maker-checker、職責分離）**：KYC 核准/拒絕改由「第一人提出 → `PENDING_APPROVAL` 待覆核 → 第二個不同的人確認 → APPROVED/REJECTED」，守衛 `確認者 ≠ 提出者`，防單一 staff 獨力放行詐欺帳號。做法＝插中間狀態 + 確認端點 + 守衛，`KycRecordModel.operator` 已是稽核基礎，不必重寫。偏內控/RBAC，可歸 M-RBAC 或另立里程碑。附帶小控制：staff 不得審自己的 KYC。詳見 `08-1` §5 備忘。KYC-A 先單一 staff 審即可。
 
 > **決策理由 / KYC 背景知識（給接手者）**：
 >
