@@ -1,12 +1,13 @@
 from rest_framework import routers
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from rest_framework_simplejwt.views import TokenRefreshView
 from django.urls import path
-from .views import UserViewSet, WalletViewSet, LoginView, RegisterView
+from .views import UserViewSet, WalletViewSet, LoginView, RegisterView, KYCViewSet
 
 
 router = routers.SimpleRouter()
 router.register(r"user", UserViewSet)
 router.register(r"wallet", WalletViewSet)
+router.register(r'kyc', KYCViewSet)
 
 
 urlpatterns = [

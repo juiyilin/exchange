@@ -1,0 +1,16 @@
+from django.db import models
+
+
+class KycStatus(models.TextChoices):
+    UNVERIFIED = 'UNVERIFIED', '未驗證'
+    VERIFYING = 'VERIFYING', '審核中'
+    APPROVED = 'APPROVED', '已通過'
+    REJECTED = 'REJECTED', '已拒絕'
+
+
+class KycEvent(models.TextChoices):
+    SUBMITTED = "SUBMITTED", "送審"
+    APPROVED = "APPROVED", "通過"
+    REJECTED = "REJECTED", "拒絕"
+    REVOKED = "REVOKED", "撤銷"       # 風控/懲罰性作廢(詐欺/盜用/制裁)
+    REVERIFY_REQUIRED = "REVERIFY_REQUIRED", "要求重驗"   # 例行重新驗證

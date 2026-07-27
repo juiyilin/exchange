@@ -8,16 +8,23 @@ from ledger.models import LedgerEntryModel
 from transaction.constants import OrderStatus
 from cryptography.fernet import Fernet
 from exchange.settings import FERNET_KEY, ISSUER
+from .constants import KycEvent, KycStatus
 
 
 class UserProfileModel(BaseTimeModel):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile', verbose_name='用戶')
     phone_number = models.CharField(max_length=20, blank=True, default="", verbose_name="電話號碼")
     address = models.CharField(max_length=255, blank=True, default="", verbose_name="地址")
 
     # 2fa
     two_factor_enabled = models.BooleanField(default=False, verbose_name='是否啟用2fa')
     encrypted_totp_secret = models.BinaryField(default=b'', verbose_name="加密後的TOTP金鑰")
+
+    latest_kyc_status = models.CharField(choices=KycStatus.choices, default=KycStatus.UNVERIFIED, max_length=20, verbose_name='當前kyc狀態')
+    legal_name = models.CharField(default='', max_length=100, verbose_name='法定姓名')
+    id_number = models.CharField(max_length=100, blank=True, default='', verbose_name='證件號碼')  # 之後要改成加密
+    birth_date = models.DateField(null=True, blank=True, default=None, verbose_name='生日')
+    nationality = models.CharField(max_length=50, blank=True, default='', verbose_name='國籍碼')
 
     class Meta:
         verbose_name = "用戶其他資料"
@@ -114,3 +121,26 @@ class WalletModel(BaseTimeModel):
             models.CheckConstraint(condition=models.Q(available_balance__gte=0), name="available_non_negative"),
             models.CheckConstraint(condition=models.Q(frozen_balance__gte=0), name="frozen_non_negative"),
         ]
+
+
+class KycRecordModel(BaseTimeModel):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='kyc_records', verbose_name='誰的事件')
+    operator = models.ForeignKey(User, on_delete=models.CASCADE, null=True, verbose_name='觸發者')
+    event_status = models.CharField(choices=KycEvent.choices, max_length=20, verbose_name='事件類型')
+    legal_name = models.CharField(default='', max_length=100, verbose_name='送審的法定姓名')
+    id_number = models.CharField(max_length=100, blank=True, default='', verbose_name='送審的證件號碼')  # 之後要改成加密
+    birth_date = models.DateField(null=True, blank=True, default=None, verbose_name='送審的生日')
+    nationality = models.CharField(max_length=50, blank=True, default='', verbose_name='送審的國籍碼')
+    reason = models.TextField(max_length=50, blank=True, default='', verbose_name='拒絕理由')
+
+    class Meta:
+        verbose_name = "KYC 紀錄"
+        verbose_name_plural = "KYC 紀錄"
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValueError(f"{self._meta.model_name} is append-only: 不可更新")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError(f"{self._meta.model_name} is append-only: 不可刪除")
