@@ -16,7 +16,7 @@ Body：{"asset_type_id": <currency_id>, "quantity": "100"}
   ※ 只動 available_balance，絕不碰 frozen_balance（凍結中的錢是掛單佔用的，不可領走）。
 
 KYC-A 更新（見 docs/08-1_kyc_spec.md §6/§7）：出金前多一道 KYC 閘門——
-  未 APPROVED → 403。本檔的 trader 在 setUp 建了 kyc_status=APPROVED 的 profile，
+  未 APPROVED → 403。本檔的 trader 在 setUp 建了 latest_kyc_status=APPROVED 的 profile，
   讓「有資格者出金」的既有行為維持綠;「未通過被擋」的情境改在 test_kyc.py 驗。
 """
 
@@ -40,7 +40,7 @@ class WithdrawTest(APITestCase):
     def setUp(self):
         self.user = User.objects.create(username="trader")
         # KYC-A：出金需 KYC 通過，本檔聚焦餘額邏輯，故 setUp 直接給 APPROVED。
-        UserProfileModel.objects.create(user=self.user, kyc_status=KycStatus.APPROVED)
+        UserProfileModel.objects.create(user=self.user, latest_kyc_status=KycStatus.APPROVED)
         self.usdt = CurrencyModel.objects.create(code="USDT", name="Tether")
         self.wallet = WalletModel.objects.create(
             user=self.user, asset_type=self.usdt,
