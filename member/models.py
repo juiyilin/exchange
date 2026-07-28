@@ -29,6 +29,9 @@ class UserProfileModel(BaseTimeModel):
     class Meta:
         verbose_name = "用戶其他資料"
         verbose_name_plural = "用戶其他資料"
+        permissions = [  # 新增可用權限
+            ('review_kyc', '可以審核kyc'),
+        ]
 
     def decrypt_totp_secret(self):
         """回傳原本的TOTP金鑰"""
@@ -120,6 +123,9 @@ class WalletModel(BaseTimeModel):
         constraints = [
             models.CheckConstraint(condition=models.Q(available_balance__gte=0), name="available_non_negative"),
             models.CheckConstraint(condition=models.Q(frozen_balance__gte=0), name="frozen_non_negative"),
+        ]
+        permissions = [  # 新增可用權限
+            ('can_deposit', '可以入金'),
         ]
 
 

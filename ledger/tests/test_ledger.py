@@ -34,7 +34,8 @@ from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from currency.models import CurrencyModel, TradingPairModel
-from member.models import WalletModel
+from member.models import WalletModel, UserProfileModel
+from member.constants import KycStatus
 from transaction.constants import OrderStatus, OrderType
 from transaction.models import OrderModel
 
@@ -61,6 +62,9 @@ class LedgerBaseTestCase(APITestCase):
         )
         self.alice = User.objects.create(username="alice")
         self.bob = User.objects.create(username="bob")
+        # 出金端點有 KYC 閘門（未 APPROVED → 403,見 08-1 §6）：會出金的用戶需先過 KYC。
+        for u in (self.alice, self.bob):
+            UserProfileModel.objects.create(user=u, latest_kyc_status=KycStatus.APPROVED)
 
     # ---- 注資 ----
     def fund(self, user, currency, available):

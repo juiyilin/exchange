@@ -8,7 +8,7 @@ from rest_framework.mixins import CreateModelMixin, UpdateModelMixin
 from rest_framework.viewsets import ModelViewSet, GenericViewSet
 from rest_framework import serializers
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
-
+from common.permissions import CustomDjangoModelPermissions, DepositPermission, ReviewKYCPermission
 from member.serializers.user_kyc import KYCRetrieveSerializer
 from .models import WalletModel, UserProfileModel, KycRecordModel
 from member.serializers import KYCCreateSerializer, KYCListSerializer, KYCReasonSerializer, UserListSerializer, WalletSerializer, WithdrawSerializer, DepositSerializer, LoginSerializer, RegisterSerializer, TwoFactorEnableSerializer
@@ -46,7 +46,7 @@ class LoginView(TokenObtainPairView):
 
 
 class UserViewSet(ModelViewSet):
-    permission_classes = [IsAdminUser]
+    permission_classes = [CustomDjangoModelPermissions]
     queryset = User.objects.select_related("profile").all()
     serializer_class = UserListSerializer
 
@@ -57,16 +57,15 @@ class WalletViewSet(ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        if self.request.user.is_staff:
+        if self.request.user.has_perm('member.view_walletmodel'):
             return queryset
         return queryset.filter(user=self.request.user)
 
     def perform_create(self, serializer):
-        # 這裡可以添加一些創建錢包前的邏輯，例如檢查用戶是否存在等
         user = self.request.user
         serializer.save(user=user)
 
-    @action(methods=['post'], detail=False, permission_classes=[IsAdminUser])
+    @action(methods=['post'], detail=False, permission_classes=[DepositPermission])
     @transaction.atomic
     def deposit(self, request):
         """admin user幫user入金，用於範圍一(沒有串鏈)測試"""
@@ -110,7 +109,9 @@ class KYCViewSet(ModelViewSet):
     def get_permissions(self):
         if self.action in ['create', 'me']:
             return [IsAuthenticated()]
-        return [IsAdminUser()]
+        if self.action in ['approve', 'reject', 'revoke', 'reverify']:
+            return [ReviewKYCPermission()]
+        return [CustomDjangoModelPermissions()]
 
     def get_serializer_class(self):
         if self.action in ['list']:
@@ -194,13 +195,6 @@ class KYCViewSet(ModelViewSet):
     @transaction.atomic
     def approve(self, request, *args, **kwargs):
         """核可"""
-        # self.check_latest_kyc_status(self.action)
-        # instance = self.get_object()
-        # instance.latest_kyc_status = KycStatus.APPROVED
-        # instance.save()
-
-        # kyc_record_data = self.get_base_kyc_record_data(instance, KycEvent.APPROVED)
-        # KycRecordModel.objects.create(**kyc_record_data)
         self.do_kyc(self.action)
         return Response(status=status.HTTP_200_OK)
 
@@ -213,13 +207,6 @@ class KYCViewSet(ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        # instance = self.get_object()
-        # instance.latest_kyc_status = KycStatus.REJECTED
-        # instance.save()
-
-        # kyc_record_data = self.get_base_kyc_record_data(instance, KycEvent.REJECTED)
-        # kyc_record_data.update(serializer.validated_data)
-        # KycRecordModel.objects.create(**kyc_record_data)
         self.do_kyc(self.action, serializer.validated_data)
         return Response(status=status.HTTP_200_OK)
 
@@ -232,13 +219,6 @@ class KYCViewSet(ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        # instance = self.get_object()
-        # instance.latest_kyc_status = KycStatus.UNVERIFIED
-        # instance.save()
-
-        # kyc_record_data = self.get_base_kyc_record_data(instance, KycEvent.REVOKED)
-        # kyc_record_data.update(serializer.validated_data)
-        # KycRecordModel.objects.create(**kyc_record_data)
         self.do_kyc(self.action, serializer.validated_data)
         return Response(status=status.HTTP_200_OK)
 
@@ -251,12 +231,5 @@ class KYCViewSet(ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        # instance = self.get_object()
-        # instance.latest_kyc_status = KycStatus.UNVERIFIED
-        # instance.save()
-
-        # kyc_record_data = self.get_base_kyc_record_data(instance, KycEvent.REVERIFY_REQUIRED)
-        # kyc_record_data.update(serializer.validated_data)
-        # KycRecordModel.objects.create(**kyc_record_data)
         self.do_kyc(self.action, serializer.validated_data)
         return Response(status=status.HTTP_200_OK)

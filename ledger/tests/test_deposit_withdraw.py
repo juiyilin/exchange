@@ -15,10 +15,12 @@ docs/07-1_logging_audit_spec.md §4 / §4.1。請寫實作讓每條測試變綠�
      通過後追加一筆 DepositWithdrawModel(direction=WITHDRAW, DONE)，
      並把 WITHDRAW 的 LedgerEntry 由原本 ref_type="manual" 改成「指回這筆 DW 列」。
 
-  3) 入金 POST /api/user/wallet/deposit/（新增，admin-only）：
-     WalletViewSet 的 @action(detail=False, methods=['post'])，permission=[IsAdminUser]。
-     body：{"user_id", "asset_type_id", "quantity"}（admin 替某用戶入金，對象用 body 的 user_id）。
-     quantity<=0 → 400；非 admin → 403。通過：get_or_create 錢包、available += quantity、
+  3) 入金 POST /api/user/wallet/deposit/（新增，僅限有入金權者）：
+     WalletViewSet 的 @action(detail=False, methods=['post'])。
+     權限：原為 [IsAdminUser]，M-RBAC 後改為要求 can_deposit 權限的自訂 permission（[CanDeposit]），
+     由「管理員」群組持有（見 09-1_permission_spec.md）。故 setUp 的入金者改綁管理員群組、不再靠 is_staff。
+     body：{"user_id", "asset_type_id", "quantity"}（替某用戶入金，對象用 body 的 user_id）。
+     quantity<=0 → 400；無入金權 → 403。通過：get_or_create 錢包、available += quantity、
      建 DW(direction=DEPOSIT, DONE)、寫 LedgerEntry(reason=DEPOSIT, AVAILABLE, +quantity, 指回 DW)。
 
 關於 ref_type：規格建議用固定字串 "deposit_withdraw"；但你既有實作是用 `_meta.model_name`
@@ -31,11 +33,12 @@ choices 一律用字串值比對（"DEPOSIT"/"WITHDRAW"/"DONE"/"AVAILABLE"…）
 
 from decimal import Decimal
 
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User, Group
 from rest_framework.test import APITestCase
 
 from currency.models import CurrencyModel
-from member.models import WalletModel
+from member.constants import Role, KycStatus
+from member.models import WalletModel, UserProfileModel
 from ledger.models import LedgerEntryModel, DepositWithdrawModel
 
 
@@ -52,7 +55,12 @@ class DWBaseTestCase(APITestCase):
         self.usdt = CurrencyModel.objects.create(code="USDT", name="Tether")
         self.btc = CurrencyModel.objects.create(code="BTC", name="Bitcoin")
         self.bob = User.objects.create(username="bob")
-        self.admin = User.objects.create(username="admin", is_staff=True)
+        # 出金端點有 KYC 閘門（未 APPROVED → 403,見 08-1 §6）：出金者 bob 需先過 KYC。
+        UserProfileModel.objects.create(user=self.bob, latest_kyc_status=KycStatus.APPROVED)
+        # M-RBAC:入金權改由 can_deposit 權限承載（「管理員」群組持有），不再靠 is_staff。
+        # 群組與權限由 member 的 sync_roles（post_migrate）建好,測試 DB 已就緒。
+        self.admin = User.objects.create(username="admin")
+        self.admin.groups.add(Group.objects.get(name=Role.ADMIN))
 
     def fund(self, user, currency, available):
         return WalletModel.objects.create(

@@ -2,11 +2,12 @@
 
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework import serializers
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Group, User
 from currency.models import CurrencyModel
 from common.func import verify_totp, generate_encrypted_totp_secret
 from exchange.settings import ISSUER
 from member.models import UserProfileModel, WalletModel
+from member.constants import Role
 import pyotp
 
 
@@ -27,12 +28,19 @@ class RegisterSerializer(serializers.ModelSerializer):
 
         user = User.objects.create_user(**validated_data)
 
+        # set groups
+        trader_groups = Group.objects.filter(name=Role.TRADER)
+        user.groups.set(trader_groups)
+
+        # 2fa
         secret, encrypted_secret = generate_encrypted_totp_secret()
         UserProfileModel.objects.create(
             user=user, phone_number=phone_number, address=address, encrypted_totp_secret=encrypted_secret
         )
         self.validated_data['secret'] = secret
         self.validated_data['issuer'] = ISSUER
+
+        # create wallets
         if asset_types:
             wallets = [WalletModel(user=user, asset_type=asset_type) for asset_type in asset_types]
             WalletModel.objects.bulk_create(wallets)

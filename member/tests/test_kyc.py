@@ -20,10 +20,10 @@ M-KYC / KYC-A（第一步）— 身份驗證流程測試。
 ------- 端點（/api/user/kyc/；KycViewSet，lookup_field='user_id'）-------
   POST /api/user/kyc/                    送審 {legal_name,id_number,birth_date,nationality}，綁 request.user  [IsAuthenticated]
   GET  /api/user/kyc/me/                 查自己的 KYC 狀態                                                    [IsAuthenticated]
-  POST /api/user/kyc/{user_id}/approve/  VERIFYING -> APPROVED                                                 [IsAdminUser]
-  POST /api/user/kyc/{user_id}/reject/   VERIFYING -> REJECTED，body {reason}（必填）                          [IsAdminUser]
-  POST /api/user/kyc/{user_id}/revoke/   APPROVED -> UNVERIFIED，記 REVOKED（撤銷），body {reason}（必填）    [IsAdminUser]
-  POST /api/user/kyc/{user_id}/reverify/ APPROVED -> UNVERIFIED，記 REVERIFY_REQUIRED，body {reason}（必填）   [IsAdminUser]
+  POST /api/user/kyc/{user_id}/approve/  VERIFYING -> APPROVED                                                 [review_kyc→compliance]
+  POST /api/user/kyc/{user_id}/reject/   VERIFYING -> REJECTED，body {reason}（必填）                          [review_kyc→compliance]
+  POST /api/user/kyc/{user_id}/revoke/   APPROVED -> UNVERIFIED，記 REVOKED（撤銷），body {reason}（必填）    [review_kyc→compliance]
+  POST /api/user/kyc/{user_id}/reverify/ APPROVED -> UNVERIFIED，記 REVERIFY_REQUIRED，body {reason}（必填）   [review_kyc→compliance]
 
 reason：reject/revoke/reverify 三者皆必填（沒帶 -> 400）；欄位在 KycRecordModel.reason（TextField）。
 
@@ -34,11 +34,11 @@ reason：reject/revoke/reverify 三者皆必填（沒帶 -> 400）；欄位在 K
 
 from decimal import Decimal
 
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User, Group
 from rest_framework.test import APITestCase
 
 from currency.models import CurrencyModel
-from member.constants import KycStatus, KycEvent
+from member.constants import KycStatus, KycEvent, Role
 from member.models import UserProfileModel, WalletModel, KycRecordModel
 
 
@@ -83,7 +83,10 @@ class KycStateMachineTest(APITestCase):
         self.profile = UserProfileModel.objects.create(user=self.user)  # 預設 UNVERIFIED
         self.other = User.objects.create(username="other")
         self.other_profile = UserProfileModel.objects.create(user=self.other)
-        self.admin = User.objects.create(username="admin", is_staff=True)
+        # M-RBAC:KYC 審核權專屬 compliance 角色（見 09-1 §5「職責分離」),
+        # 審核者改綁 compliance 群組,不再靠 is_staff。admin 角色反而沒有審核權。
+        self.reviewer = User.objects.create(username="reviewer")
+        self.reviewer.groups.add(Group.objects.get(name=Role.COMPLIANCE))
         self.client.force_authenticate(user=self.user)
 
     # ---- 輔助 ----
@@ -160,7 +163,7 @@ class KycStateMachineTest(APITestCase):
     def test_admin_approve(self):
         """staff 對 VERIFYING approve -> APPROVED，歷史多一筆 APPROVED(operator=admin)。"""
         self._submit()  # -> VERIFYING
-        self._as(self.admin)
+        self._as(self.reviewer)
 
         resp = self.client.post(approve_url(self.user), {}, format="json")
 
@@ -168,12 +171,12 @@ class KycStateMachineTest(APITestCase):
         self.profile.refresh_from_db()
         self.assertEqual(self.profile.latest_kyc_status, KycStatus.APPROVED)
         rec = self._records(self.user, KycEvent.APPROVED).latest("created_at")
-        self.assertEqual(rec.operator, self.admin)
+        self.assertEqual(rec.operator, self.reviewer)
 
     def test_admin_reject_writes_reason(self):
         """staff reject -> REJECTED，歷史 REJECTED 帶 reason。"""
         self._submit()  # -> VERIFYING
-        self._as(self.admin)
+        self._as(self.reviewer)
 
         resp = self.client.post(
             reject_url(self.user), {"reason": "證件模糊"}, format="json"
@@ -198,7 +201,7 @@ class KycStateMachineTest(APITestCase):
 
     def test_approve_non_pending_rejected(self):
         """對非 VERIFYING（此處 UNVERIFIED）的人 approve -> 400。"""
-        self._as(self.admin)
+        self._as(self.reviewer)
 
         resp = self.client.post(approve_url(self.user), {}, format="json")
 
@@ -222,7 +225,7 @@ class KycStateMachineTest(APITestCase):
         """重送覆寫的是 profile 當前值，歷史層仍留得住「上一次交了什麼」。"""
         # 第一次送審（名字 A）-> admin 拒絕
         self._submit(dict(SUBMIT_BODY, legal_name="舊名字A"))
-        self._as(self.admin)
+        self._as(self.reviewer)
         self.client.post(reject_url(self.user), {"reason": "資料有誤"}, format="json")
         # 用戶修正後重送（名字 B）
         self._as(self.user)
@@ -244,7 +247,7 @@ class KycStateMachineTest(APITestCase):
         """staff revoke 已通過用戶 -> UNVERIFIED，歷史多一筆 REVOKED（含 reason）。"""
         self.profile.latest_kyc_status = KycStatus.APPROVED
         self.profile.save()
-        self._as(self.admin)
+        self._as(self.reviewer)
 
         resp = self.client.post(revoke_url(self.user), {"reason": "涉嫌詐欺"}, format="json")
 
@@ -260,7 +263,7 @@ class KycStateMachineTest(APITestCase):
         """staff reverify 已通過用戶 -> UNVERIFIED，歷史多一筆 REVERIFY_REQUIRED（含 reason）。"""
         self.profile.latest_kyc_status = KycStatus.APPROVED
         self.profile.save()
-        self._as(self.admin)
+        self._as(self.reviewer)
 
         resp = self.client.post(reverify_url(self.user), {"reason": "證件到期"}, format="json")
 
@@ -274,7 +277,7 @@ class KycStateMachineTest(APITestCase):
     def test_reject_without_reason_rejected(self):
         """reject 沒帶 reason -> 400（reason 必填），狀態不變。"""
         self._submit()  # -> VERIFYING
-        self._as(self.admin)
+        self._as(self.reviewer)
 
         resp = self.client.post(reject_url(self.user), {}, format="json")
 
@@ -286,7 +289,7 @@ class KycStateMachineTest(APITestCase):
         """revoke 沒帶 reason -> 400（reason 必填），狀態不變。"""
         self.profile.latest_kyc_status = KycStatus.APPROVED
         self.profile.save()
-        self._as(self.admin)
+        self._as(self.reviewer)
 
         resp = self.client.post(revoke_url(self.user), {}, format="json")
 
@@ -298,7 +301,7 @@ class KycStateMachineTest(APITestCase):
         """reverify 沒帶 reason -> 400（reason 必填），狀態不變。"""
         self.profile.latest_kyc_status = KycStatus.APPROVED
         self.profile.save()
-        self._as(self.admin)
+        self._as(self.reviewer)
 
         resp = self.client.post(reverify_url(self.user), {}, format="json")
 
@@ -308,7 +311,7 @@ class KycStateMachineTest(APITestCase):
 
     def test_revoke_non_approved_rejected(self):
         """對非 APPROVED 的人 revoke -> 400（沒通過過，談不上撤銷）。帶 reason 以確保 400 來自狀態守衛。"""
-        self._as(self.admin)
+        self._as(self.reviewer)
 
         resp = self.client.post(revoke_url(self.user), {"reason": "x"}, format="json")
 
@@ -316,7 +319,7 @@ class KycStateMachineTest(APITestCase):
 
     def test_reverify_non_approved_rejected(self):
         """對非 APPROVED 的人 reverify -> 400（同一道守衛）。帶 reason 以確保 400 來自狀態守衛。"""
-        self._as(self.admin)
+        self._as(self.reviewer)
 
         resp = self.client.post(reverify_url(self.user), {"reason": "x"}, format="json")
 

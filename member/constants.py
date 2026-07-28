@@ -14,3 +14,10 @@ class KycEvent(models.TextChoices):
     REJECTED = "REJECTED", "拒絕"
     REVOKED = "REVOKED", "撤銷"       # 風控/懲罰性作廢(詐欺/盜用/制裁)
     REVERIFY_REQUIRED = "REVERIFY_REQUIRED", "要求重驗"   # 例行重新驗證
+
+
+class Role(models.TextChoices):
+    TRADER = "trader", "交易者"
+    SUPPORT = "support", "客服"
+    COMPLIANCE = "compliance", "合規"
+    ADMIN = "admin", "管理員"

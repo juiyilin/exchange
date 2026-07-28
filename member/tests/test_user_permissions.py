@@ -1,5 +1,5 @@
 """
-M-KYC 暖身（二）— UserViewSet 權限收斂。〔規格：02-1 §6.5〕
+M-KYC 暖身（二）— UserViewSet 權限收斂。〔規格：09-1_permission_spec.md〕
 
 ## 這是在修一個真的資安洞
 
@@ -27,7 +27,7 @@ M-KYC 暖身（二）— UserViewSet 權限收斂。〔規格：02-1 §6.5〕
 
 - `list` / `retrieve` 限 `IsAdminUser`（TASKS.md 既有決議）。
 - 未登入一律 401。
-- 這裡在做的是 **02-1 §6.5 的「角色層」**：管的是「你能不能做這種操作」，
+- 這裡在做的是 **09-1_permission_spec.md 的「角色層」**：管的是「你能不能做這種操作」，
   跟 `WalletViewSet` 那種「你只能碰自己的資料」（擁有權層）是**兩個正交的維度**。
   本階段先用最粗的角色（is_staff），完整 RBAC（Django Group）留給 M-RBAC。
 
@@ -51,10 +51,19 @@ M-KYC 暖身（二）— UserViewSet 權限收斂。〔規格：02-1 §6.5〕
 屆時一起設計比較不會改兩次。先把洞補上。
 """
 
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User, Group
 from rest_framework.test import APITestCase
 
 from member.models import UserProfileModel
+from member.constants import Role
+
+# ── M-RBAC 更新 ──────────────────────────────────────────────────────────
+# 本檔的斷言（匿名 401 / 一般用戶 403 / admin 200 / 密碼不外洩 / 註冊仍開放）不變,
+# 但兩件事隨 M-RBAC 調整（見 09-1 §6）:
+#   1. admin 不再靠 is_staff,改綁 Django「admin」群組（群組帶 view/add/change/delete_user）。
+#   2. UserViewSet 由 IsAdminUser 升級為 read-gating 子類——GET 要 view_user、寫要對應權限。
+# 下方 docstring 中「IsAdminUser / is_staff」的敘述為當時歷史脈絡,保留備查。
+# ─────────────────────────────────────────────────────────────────────────
 
 USER_LIST_URL = "/api/user/user/"
 REGISTER_URL = "/api/user/register/"
@@ -64,9 +73,10 @@ class UserViewSetPermissionTest(APITestCase):
     def setUp(self):
         self.alice = User.objects.create_user(username="alice", password="pw-alice-123")
         self.bob = User.objects.create_user(username="bob", password="pw-bob-123")
-        self.admin = User.objects.create_user(
-            username="admin", password="pw-admin-123", is_staff=True
-        )
+        self.admin = User.objects.create_user(username="admin", password="pw-admin-123")
+        # M-RBAC:admin 角色改由 Django 群組承載,不再靠 is_staff。
+        # 群組與權限由 member/rbac.py 的 sync_roles（post_migrate）建好,測試 DB 已就緒。
+        self.admin.groups.add(Group.objects.get(name=Role.ADMIN))
         for user in (self.alice, self.bob, self.admin):
             UserProfileModel.objects.create(user=user)
 
@@ -174,7 +184,7 @@ class UserViewSetPermissionTest(APITestCase):
         """★重要★ 鎖了 UserViewSet 之後，註冊端點必須仍然免登入可用。
 
         這條擋的是經典死鎖：把用戶相關端點全鎖成要登入 → 新用戶無法註冊 →
-        永遠沒有帳號可以登入。02-1 §6.5 結尾那段警告講的就是這件事。
+        永遠沒有帳號可以登入。09-1_permission_spec.md 結尾那段警告講的就是這件事。
 
         本專案因為 M7-B 已經把註冊拆成獨立的 `RegisterView`（自帶
         `authentication_classes = []`），所以天生免疫。這條測試是把
