@@ -17,7 +17,7 @@
 
 ---
 
-## 目前進度（最後更新：**✅ KYC-A 第一步實作完成——欄位 + 兩層模型（`UserProfileModel` 當前狀態層 + append-only `KycRecordModel`）+ 狀態機 + admin approve/reject/revoke/reverify + 出金閘門，全套 69 測試綠。下一步：KYC-A 第二步（MinIO + 證件上傳）或先評估其他里程碑**）
+## 目前進度（最後更新：**✅ M-RBAC 100% 完成——四角色 RBAC（交易者/客服/合規/管理員）全部實作完成,含註冊自動歸交易者,161 測試全綠。權限規格已獨立成 `09-1_permission_spec.md`。下一步:KYC-A 第二步（MinIO,`08-1` §8）或 KYC-B（下單閘門與分級）。**）
 
 > **KYC-A 拆兩步**：**第一步（✅ 完成）**＝欄位 + 狀態機 + admin 審核 + 出金閘門（文字欄位帶過證件）;**第二步（未做）**＝MinIO + 證件照上傳，規格 `08-1` §8 已預留。
 >
@@ -27,7 +27,23 @@
 > - 出金閘門：`withdraw` 未 `APPROVED` → 403。
 > - 踩過的坑（已修）：送審守衛原本讀 `request.user.profile`（反向 OneToOne 會被 force_authenticate 重用的 user 快取），改成讀「等下要更新的同一個 `instance`」才正確擋掉重送。
 >
-> **下一步接手點**：評估要不要做 KYC-A 第二步（MinIO，規格 §8），或先做其他里程碑（M-RBAC / KYC-B 下單閘門與分級 / 撮合公平性）。KYC-B 之後才碰。
+> **↑ 以上為已完成的 KYC-A 第一步（歷史）。目前焦點已切到 M-RBAC，見下。**
+
+### ✅ M-RBAC — 四角色身份組與權限　〔規格：`09-1_permission_spec.md`〕　完成（161 測試全綠）
+
+四角色 RBAC 已實作完成:**交易者 / 客服 / 合規 / 管理員**（`Role.TRADER/SUPPORT/COMPLIANCE/ADMIN`,`Group.name` 存英文碼、中文只當 label）。完整設計、權限對照表、踩坑清單見 **`docs/09-1_permission_spec.md`**（本輪從 `02-1` §6.5 獨立出來）。
+
+**落地重點：**
+
+- `member/constants.py` `Role`(TextChoices) + `member/rbac.py` `ROLES_PERMISSIONS` + `member/apps.py` `sync_roles`(掛 post_migrate,自動建 group)。
+- read-gating 只套管理型資源(User 清單、跨用戶 KYC);錢包/訂單維持 owner 讀自己的,see-all 分支從 `is_staff` 改看 `has_perm('member.view_walletmodel')`。
+- 自訂權限 `review_kyc`(合規審核)、`can_deposit`(管理員入金)——非 CRUD 動作用自訂 permission class 查 `has_perm`,不靠 `DjangoModelPermissions`(見 `09-1` §7)。
+- 授權全面從 `is_staff` 搬到 Group/權限;既有 `test_user_permissions`/`test_kyc`/`ledger` 入金與出金測試都跟著調整。
+- 測試:`member/tests/test_rbac.py`。
+
+- [x] `RegisterView`（`RegisterSerializer.create`）建完新用戶後 `user.groups.add(Group.objects.get(name=Role.TRADER))` — 自動歸「交易者」。回歸網:`test_rbac.py::RegisterAutoJoinsTraderTest`。
+
+> **下一步接手點**：M-RBAC 全數完成（161 測試全綠）。接著評估 KYC-A 第二步（MinIO,`08-1` §8）或 KYC-B（下單閘門與分級）。`OrderViewSet` 的角色閘門刻意留給 KYC-B（會動到 25+ 條交易測試），本里程碑不碰。
 
 **節奏原則：先把「基本」功能全部做完，再進入「進階」。**（基本/進階的分類見 `00_overall_spec.md` 第 5 節功能總表）
 
@@ -229,15 +245,36 @@
 > - 既有 `force_authenticate` 測試不受強制 2FA 影響（直接設 request.user、不走 login serializer）。
 > - 註冊豁免在這裡一併做掉了（RegisterView authentication_classes/permission_classes=[]）;M-KYC 只剩「KYC 欄位/審核/風險閘門」。
 
-## M-身份組與權限（RBAC）【進階】　〔規格：02-1 §6.5〕　待做
+## M-身份組與權限（RBAC）【進階】　〔規格：`09-1_permission_spec.md`〕　✅ 完成（161 測試全綠）
 
-- [ ] 用 Django Group 分角色（如 trader / support / admin）
-- [ ] 對需要的 ViewSet 掛 `DjangoModelPermissions`（HTTP 方法↔model 權限）或自訂 permission 檢查 `request.user.groups`
-- [ ] 全域維持 IsAuthenticated 當地板，個別 view 用 permission_classes 覆寫疊角色判斷
-- [ ] 釐清「角色層（能做哪種 CRUD）」與「擁有權層（只能碰自己的）」兩維度一起生效
-- [ ] 驗證：不同角色帳號對同一端點的 CRUD 權限符合預期
+> **完整設計見獨立規格 `docs/09-1_permission_spec.md`**（四角色權限對照、read-gating、宣告式 `sync_roles`、
+> 職責分離、自訂 permission 邊界、各端點套用點、踩坑清單）。上方「✅ M-RBAC」區塊有落地摘要。此處只留里程碑層級成果，細節不重複。
 
-## M-KYC 暖身 — 註冊建錢包 + UserViewSet 權限收斂【進階】　〔規格：02-1 §4.1/§4.2/§6.5〕　✅ 完成
+原始目標（已由下方具體設計取代並細化）：
+
+- [x] 用 Django Group 分角色 → **定案四角色：交易者 / 客服 / 合規 / 管理員**（`Role.TRADER/SUPPORT/COMPLIANCE/ADMIN`,規格 09-1 §2）
+- [x] 掛 `DjangoModelPermissions` 或自訂 permission → **read-gating 子類（管理型資源）＋自訂權限 `review_kyc`/`can_deposit`（非 CRUD 動作）**
+- [x] 全域維持 IsAuthenticated 地板、個別 view 覆寫 → 已寫進 09-1 §7 各端點套用點
+- [x] 釐清角色層 vs 擁有權層兩維度 → 規格 09-1_permission_spec.md 開頭「三層正交」＋ read-gating 只套管理型資源
+- [x] 驗證設計 → `member/tests/test_rbac.py` 把每條界線釘成契約
+
+**分工**：Claude 寫規格（09-1_permission_spec.md 全面改寫）＋測試（`test_rbac.py` 及調整 `test_user_permissions`/`test_kyc`）;
+**使用者實作**（`rbac.py` / `sync_roles` / 自訂權限 / read-gating 子類 / 各 view 套用 / 註冊自動歸組），
+做完讓全套測試轉綠。逐項清單見上方「目前焦點」。
+
+> **設計決策摘要（給接手者，細節見 `09-1_permission_spec.md`）**：
+>
+> - **四角色而非三角色**：多一個「合規」專責 KYC 審核,與「管理員」（金流/系統）**職責分離**——
+>   沒有任何單一角色能「又放行帳號、又幫它入金」。這是 KYC-B 四眼原則的雛形。
+> - **read-gating 不是每個端點都套**：只套「連自己都不該看」的資源（用戶清單、跨用戶 KYC）;
+>   錢包/訂單這種擁有權型資源,owner 永遠讀自己的,角色層只決定「能否額外看到別人的」。
+> - **宣告式建 group（非 data migration、非純管理指令）**：`ROLES_PERMISSIONS` dict 當單一真相 + `post_migrate` 自動套用。
+>   理由:migration 只記變更、久了難查現狀;純指令不會自己跑、測試 DB 不會有 group。宣告式兩者兼得。
+> - **授權從 `is_staff` 搬到 Group/權限**：`DjangoModelPermissions` 查 `has_perm`,`is_staff` 不給 model 權限;
+>   之後 `is_staff` 只管「能否登入 admin 後台」。既有 `test_user_permissions`/`test_kyc` 已隨之調整。
+> - **`OrderViewSet` 本里程碑不碰**：訂單的角色/分級閘門留給 KYC-B（會動到 25+ 條交易測試）。
+
+## M-KYC 暖身 — 註冊建錢包 + UserViewSet 權限收斂【進階】　〔規格：02-1 §4.1/§4.2 + 09-1〕　✅ 完成
 
 > M7 留下的兩條尾巴，與 KYC 本體無關但被歸在同一里程碑。獨立、小、且第 2 點是真的資安洞。
 > **Claude 寫測試 + 規格（02-1 §4 全面同步實作），使用者實作，全套測試綠。**
@@ -264,7 +301,7 @@
 >   讓呼叫端指定 → 註冊邏輯與「目前上架哪些幣」解耦。
 > - 欄位用 `CurrencyModel.id`（與 `WithdrawSerializer`/`DepositSerializer` 的 `asset_type_id` 風格一致）。
 > - 新錢包餘額必為 0 — **註冊不等於入金**，白送餘額等同憑空鑄錢（同 07-1 §4.1 入金 admin-only 的理由）。
-> - `IsAdminUser` 是 **02-1 §6.5 的「角色層」**（能做哪種操作），與 `WalletViewSet.get_queryset`
+> - `IsAdminUser` 是 **09-1_permission_spec.md 的「角色層」**（能做哪種操作），與 `WalletViewSet.get_queryset`
 >   的「擁有權層」（只能碰自己的）是兩個正交維度。本階段先用最粗的角色（is_staff），
 >   完整 RBAC（Django Group）留給 M-RBAC。
 > - **`/me/` 端點刻意不做**：鎖成 admin-only 後一般用戶無法查自己資料，正解是加

@@ -8,9 +8,9 @@
 > 範圍二新增的是「充值地址管理」這種**鏈上**的東西，收在 `02-2`。
 > （`UserProfileModel.address` 是**住址**，與鏈上地址無關，別搞混。）
 >
-> **狀態（2026-07-15 同步至實作）**：§4 API、§6.1 認證、§6.2 帳本、§6.3 自動建錢包
-> 皆已落地；§6.4 精度未做（範圍二阻擋項）；§6.5 RBAC 僅完成粗粒度（is_staff），
-> Group 分角色待 M-RBAC。KYC 規格另立（見 TASKS.md「M-KYC」）。
+> **狀態（2026-07 同步至實作）**：§4 API、§6.1 認證、§6.2 帳本、§6.3 自動建錢包
+> 皆已落地；§6.4 精度未做（範圍二阻擋項）；§6.5 RBAC／授權層**已獨立成 `09-1_permission_spec.md`**
+> （M-RBAC 已實作完成）。KYC 規格見 `08-1_kyc_spec.md`。
 
 ## 1. 這個模組負責什麼
 
@@ -146,7 +146,7 @@
 **刻意延後**：KYC 階段會需要「查自己的 KYC 狀態」，屆時一起設計，免得改兩次。
 
 > 為什麼不把 `retrieve` 放寬成「可以查自己」？因為 `IsAdminUser` 是**角色層**判斷
-> （見 §6.5），它只問「你是不是 staff」，不問「你要查的是不是自己」。
+> （見 `09-1` §6），它只問「你是不是 staff」，不問「你要查的是不是自己」。
 > 混進擁有權判斷會讓一個端點同時承擔兩種權限語意，日後難以維護。
 
 ### 4.4 基本階段的原始目標（已達成，留存備查）
@@ -215,44 +215,14 @@
 範圍一是模擬帳本、金額都是整數級，暫時無害。但這是跨全系統的 migration
 （錢包／訂單／成交／帳本全都要改），**必須在碰真錢之前做完**。詳見 `01-2` §3 與 TASKS.md M8 第一項。
 
-### 6.5 身份組與權限（RBAC）
+### 6.5 身份組與權限（RBAC）→ 已獨立成 `09-1_permission_spec.md`
 
-認證解決「你是誰」，授權（權限）解決「你能做什麼」。這兩件事是分層的，不要混在一起：
-
-- **認證層（M7 已做）**：JWT 認出 `request.user`，全域 `IsAuthenticated` 當地板（最低門檻：要登入）。
-- **物件層擁有權（M7 已做）**：用 `get_queryset` 過濾 `request.user`、cancel 綁 `user=request.user`，保證「只能碰自己的資料」。這是「對哪一筆」的維度。
-- **角色層 RBAC（本節，部分完成）**：依角色決定「能不能做某類 CRUD」。這是「能做哪種操作」的維度。
-  - **已做（粗粒度）**：直接用 `is_staff` 當唯一角色軸——`UserViewSet` 與 `wallet/deposit/` 掛
-    `IsAdminUser`；`WalletViewSet.get_queryset` 的 staff 分支看全站。
-  - **待做（M-RBAC）**：用 Django 內建的 **Group（身份組）** 分出多個角色，取代
-    「staff / 非 staff」這種二分法。
-
-兩個維度是正交的、要一起用才完整：RBAC 管「能不能下單/能不能看全站訂單」，擁有權管「只能取消自己的單」。
-
-實作方向（建議用 Django 既有機制，不要自己造）：
-
-- Django 每個 model 自動有 `view / add / change / delete` 四種權限，可指派給不同 Group。
-- DRF 的 `DjangoModelPermissions` 會把 HTTP 方法對應到這些權限（GET→view、POST→add、PUT/PATCH→change、DELETE→delete）。把它掛在特定 ViewSet 的 `permission_classes`，就是「依身份組決定誰能 CRUD」。
-- 全域預設仍維持 `IsAuthenticated`;個別 view 用 `permission_classes` 覆寫，疊上角色判斷（`DjangoModelPermissions` 或自訂 `permission`，例如檢查 `request.user.groups`）。
-- 需要更細的「同一 model、不同角色看不同欄位／不同物件」時，再寫自訂 `BasePermission` 或物件層 `has_object_permission`。
-
-設想的角色舉例（依專案需要調整）：一般交易者（trader）只能 CRUD 自己的訂單/錢包;客服（support）可唯讀查詢用戶資料;風控/管理（admin/staff）可跨用戶查詢與凍結。
-
-> **註冊死鎖（已解決，記錄備查）**：在全域 `IsAuthenticated` 下，若註冊端點沒有豁免，
-> 就會產生經典死鎖——新用戶無法註冊 → 永遠沒有帳號可以登入。
-> 本專案在 M7-B 把註冊拆成獨立的 `RegisterView`（自帶 `authentication_classes = []`）後
-> **天生免疫**，不需要對 `UserViewSet` 做 action 層級的權限分歧。
-> 回歸網：`member/test/test_user_permissions.py::test_register_still_open`。
+> RBAC／授權層是**跨模組**主題（member／transaction／ledger 都受它管），已於 2026-07 從本節獨立成
+> **`docs/09-1_permission_spec.md`**（比照 KYC 獨立成 `08-1` 的判斷）。四角色（交易者/客服/合規/管理員）、
+> read-gating、宣告式 `sync_roles`、職責分離、自訂 permission 邊界、各端點套用點，全部移到那份，**M-RBAC 已實作完成**。
 >
-> **`UserViewSet` 為什麼非鎖不可**：它原本沒有 `get_queryset` 過濾也沒有 `permission_classes`
-> 覆寫，只吃到全域的 `IsAuthenticated` ——意思是**任何一個登入的普通用戶，都能撈出全站
-> 所有人的 username、email、is_staff、電話、地址**（`UserListSerializer` 是
-> `exclude = ["password"]`，除了密碼什麼都給）。
->
-> 對照：`WalletViewSet` 與訂單在 M7 都做了擁有權過濾，**只有 User 這張表漏掉**。
-> 用戶名單外洩在真實交易所是重大事故：它給攻擊者完整的目標清單（可拿去撞庫、釣魚），
-> 而 `is_staff` 欄位等於直接標示「先打哪幾個帳號最有價值」。KYC 階段的資料
-> （身分證號、證件照）敏感度只會更高，本階段等於先把地基打好。
+> member 這邊只需知道：**授權看 Group／權限（不再看 `is_staff`）**；`Role`／`ROLES_PERMISSIONS`／`sync_roles`
+> 放在 `member`（`constants.py`／`rbac.py`／`apps.py`），因為角色資料落在 member。細節一律以 `09-1` 為準。
 
 ## 7. 常見坑
 

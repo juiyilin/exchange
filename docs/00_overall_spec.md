@@ -139,7 +139,7 @@ common ← currency ← ledger ← member ← transaction
 - 【基本】錢包：每人每幣一個，含可用餘額/凍結餘額
 - 【基本】查詢自己的錢包餘額
 - 【進階】真實認證（取代目前的「隨機指派用戶」）：註冊、登入、JWT 驗證、2FA(TOTP)
-- 【進階】身份組與權限（Role-Based Access Control, RBAC）：用 Django Group 分角色，依角色決定誰能對哪些資源做 CRUD
+- 【進階】身份組與權限（Role-Based Access Control, RBAC）：用 Django Group 分角色，依角色決定誰能對哪些資源做 CRUD。✅ 已實作（四角色，詳見 `09-1_permission_spec.md`）
 - 【進階】帳本流水（ledger entry）：每筆餘額變動都留一筆不可刪的紀錄
 
 ### 訂單（transaction / order）
@@ -202,6 +202,8 @@ common ← currency ← ledger ← member ← transaction
 | `05-1_settlement_spec.md`       | 成交結算與餘額不變量                     |
 | `06-1_deposit_withdraw_spec.md` | 入金/出金（模擬）                        |
 | `07-1_logging_audit_spec.md`    | 日誌與帳本（LedgerEntry / 入出金紀錄）   |
+| `08-1_kyc_spec.md`              | KYC 身分驗證（兩層模型、狀態機、出金閘門）|
+| `09-1_permission_spec.md`       | 權限與身份組（RBAC／授權層，跨模組）     |
 | `TASKS.md`                      | 可接手的分階段待辦清單                   |
 
 ### 範圍二（測試鏈，設計文件、尚未實作）
