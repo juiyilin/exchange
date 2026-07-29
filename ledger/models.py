@@ -4,6 +4,7 @@ from common.models import BaseTimeModel
 from currency.models import CurrencyModel
 from .constants import ReasonType, BalanceFieldType, DepositWithdrawType, DepositWithdrawStatus
 from transaction.constants import OrderStatus
+from django.db.models.functions import Abs, Coalesce
 
 
 class DepositWithdrawModel(BaseTimeModel):
@@ -170,6 +171,22 @@ class LedgerEntryQuerySet(models.QuerySet):
             'ref_id': str(withdraw.id)
         }
         self.create(**ledger_dict)
+
+    def get_user_total_amount(self, user, reason, date_from, date_to=''):
+        if not date_to:
+            date_filter = {'created_at__date': date_from}
+        # TODO:有 date_to 時的filter
+        return self.filter(
+                user_id=user.id,
+                reason=reason,
+                **date_filter
+            ).select_related('asset_type').select_for_update().aggregate(
+                total=Coalesce(
+                        models.Sum(models.F('asset_type__fiat_rate') * Abs(models.F('delta'))),
+                        models.Value(0),
+                        output_field=models.DecimalField()
+                    )
+            )['total']
 
 
 class LedgerEntryManager(models.Manager.from_queryset(LedgerEntryQuerySet)):

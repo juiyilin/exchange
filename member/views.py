@@ -1,5 +1,6 @@
 from django.contrib.auth.models import User
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
@@ -7,14 +8,14 @@ from rest_framework.response import Response
 from rest_framework.mixins import CreateModelMixin, UpdateModelMixin
 from rest_framework.viewsets import ModelViewSet, GenericViewSet
 from rest_framework import serializers
-from rest_framework.permissions import IsAdminUser, IsAuthenticated
-from common.permissions import CustomDjangoModelPermissions, DepositPermission, ReviewKYCPermission
-from member.serializers.user_kyc import KYCRetrieveSerializer
+from rest_framework.permissions import IsAuthenticated
+from common.permissions import CustomDjangoModelPermissions, DepositPermission, KYCApprovedPermission, ReviewKYCPermission
+from member.serializers.user_kyc import KYCApproveSerializer, KYCRetrieveSerializer
 from .models import WalletModel, UserProfileModel, KycRecordModel
 from member.serializers import KYCCreateSerializer, KYCListSerializer, KYCReasonSerializer, UserListSerializer, WalletSerializer, WithdrawSerializer, DepositSerializer, LoginSerializer, RegisterSerializer, TwoFactorEnableSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
-from ledger.models import LedgerEntryModel
-from .constants import KycStatus, KycEvent
+from ledger.models import LedgerEntryModel, ReasonType
+from .constants import KYC_TIER_DAILY_LIMIT, KycStatus, KycEvent
 
 
 class RegisterView(CreateModelMixin, UpdateModelMixin, GenericViewSet):
@@ -79,12 +80,30 @@ class WalletViewSet(ModelViewSet):
         LedgerEntryModel.objects.create_deposit_ledgers(wallet, serializer.validated_data['quantity'])
         return Response(WalletSerializer(wallet).data)
 
-    @action(methods=['post'], detail=False)
+    def check_daily_withdraw_limit(self, withdraw_amount):
+        """檢查是否達到出金上限"""
+        daily_withdraw_limit = KYC_TIER_DAILY_LIMIT[self.request.user.profile.kyc_tier]
+        if daily_withdraw_limit is None:
+            return
+        if withdraw_amount <= 0:
+            raise PermissionDenied(f'尚未設定匯率')
+        today = timezone.localdate()
+        current_withdraw = LedgerEntryModel.objects.get_user_total_amount(user=self.request.user, reason=ReasonType.WITHDRAW, date_from=today)
+        if (current_withdraw + withdraw_amount) > daily_withdraw_limit:
+            raise PermissionDenied(f'本次出金超過每日出金額度 {daily_withdraw_limit}')
+
+
+    @action(methods=['post'], detail=False, permission_classes=[KYCApprovedPermission])
     @transaction.atomic
     def withdraw(self, request):
-        """出金"""
-        if not hasattr(request.user, 'profile') or request.user.profile.latest_kyc_status != KycStatus.APPROVED:
-            raise PermissionDenied('KYC 未通過，無法出金')
+        """
+        出金
+        出金前需檢查
+        1. 錢包是否存在
+        2. 是否已設定法幣兌換匯率
+        3. 餘額是否足夠
+        4. 是否達到出金上限
+        """
         serializer = WithdrawSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -95,6 +114,9 @@ class WalletViewSet(ModelViewSet):
             raise serializers.ValidationError('錢包不存在')
         if wallet.available_balance < serializer.validated_data['quantity']:
             raise serializers.ValidationError('餘額不足')
+
+        self.check_daily_withdraw_limit(wallet.asset_type.fiat_rate * serializer.validated_data['quantity'])
+        
         wallet.available_balance -= serializer.validated_data['quantity']
         wallet.save()
         LedgerEntryModel.objects.create_withdraw_ledgers(wallet, serializer.validated_data['quantity'])
@@ -122,7 +144,7 @@ class KYCViewSet(ModelViewSet):
             return KYCCreateSerializer
         if self.action in ['reject', 'revoke', 'reverify']:
             return KYCReasonSerializer
-        return 
+        return KYCApproveSerializer
 
     @action(detail=False)
     def me(self, request):
@@ -179,11 +201,13 @@ class KYCViewSet(ModelViewSet):
         }
         return kyc_type[status]
 
-    def do_kyc(self, status, validated_data=None):
+    def do_kyc(self, status, validated_data={}):
         instance = self.get_object()
         self.check_latest_kyc_status(self.action, instance)
 
         instance.latest_kyc_status = self.kyc_status_type(status)['status']
+        if status == 'approve' and 'kyc_tier' in validated_data:
+            instance.kyc_tier = validated_data.pop('kyc_tier')
         instance.save()
 
         kyc_record_data = self.get_base_kyc_record_data(instance, self.kyc_status_type(status)['event'])
@@ -195,7 +219,10 @@ class KYCViewSet(ModelViewSet):
     @transaction.atomic
     def approve(self, request, *args, **kwargs):
         """核可"""
-        self.do_kyc(self.action)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        self.do_kyc(self.action, serializer.validated_data)
         return Response(status=status.HTTP_200_OK)
 
     @action(methods=['POST'], detail=True)

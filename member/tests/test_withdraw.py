@@ -18,6 +18,9 @@ Body：{"asset_type_id": <currency_id>, "quantity": "100"}
 KYC-A 更新（見 docs/08-1_kyc_spec.md §6/§7）：出金前多一道 KYC 閘門——
   未 APPROVED → 403。本檔的 trader 在 setUp 建了 latest_kyc_status=APPROVED 的 profile，
   讓「有資格者出金」的既有行為維持綠;「未通過被擋」的情境改在 test_kyc.py 驗。
+KYC-B 更新：出金再多一道分級每日額度閘門。預設 kyc_tier=0 的上限為 0，會把本檔出金全擋成
+  403，故 setUp 另給 kyc_tier=2（無上限），讓分級閘門對本檔的餘額邏輯測試無影響;額度情境在
+  test_kyc_tier.py 驗。
 """
 
 from decimal import Decimal
@@ -39,8 +42,11 @@ def D(x):
 class WithdrawTest(APITestCase):
     def setUp(self):
         self.user = User.objects.create(username="trader")
-        # KYC-A：出金需 KYC 通過，本檔聚焦餘額邏輯，故 setUp 直接給 APPROVED。
-        UserProfileModel.objects.create(user=self.user, latest_kyc_status=KycStatus.APPROVED)
+        # KYC-A：出金需 KYC 通過；KYC-B：出金受分級每日額度限制。本檔聚焦餘額邏輯，
+        # 故給 APPROVED + kyc_tier=2（無上限），讓兩道 KYC 閘門對這些測試都無影響。
+        UserProfileModel.objects.create(
+            user=self.user, latest_kyc_status=KycStatus.APPROVED, kyc_tier=2
+        )
         self.usdt = CurrencyModel.objects.create(code="USDT", name="Tether")
         self.wallet = WalletModel.objects.create(
             user=self.user, asset_type=self.usdt,

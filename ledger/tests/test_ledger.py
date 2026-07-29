@@ -64,7 +64,7 @@ class LedgerBaseTestCase(APITestCase):
         self.bob = User.objects.create(username="bob")
         # 出金端點有 KYC 閘門（未 APPROVED → 403,見 08-1 §6）：會出金的用戶需先過 KYC。
         for u in (self.alice, self.bob):
-            UserProfileModel.objects.create(user=u, latest_kyc_status=KycStatus.APPROVED)
+            UserProfileModel.objects.create(user=u, latest_kyc_status=KycStatus.APPROVED, kyc_tier=2)  # tier 2(無上限)：出金測試不被分級額度閘門擋
 
     # ---- 注資 ----
     def fund(self, user, currency, available):

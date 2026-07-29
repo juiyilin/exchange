@@ -21,3 +21,16 @@ class Role(models.TextChoices):
     SUPPORT = "support", "客服"
     COMPLIANCE = "compliance", "合規"
     ADMIN = "admin", "管理員"
+
+
+class KycTierLevel(models.IntegerChoices):
+    HIGH = 0, '高風險'
+    MEDIUM = 1, '一般風險'
+    LOW = 2, '低風險'
+
+
+KYC_TIER_DAILY_LIMIT = {  # TODO:之後需改成可讓admin設定
+    KycTierLevel.HIGH: 0,
+    KycTierLevel.MEDIUM: 100000,
+    KycTierLevel.LOW: None
+}

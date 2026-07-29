@@ -386,7 +386,8 @@ class WithdrawKycGateTest(APITestCase):
 
     def setUp(self):
         self.user = User.objects.create(username="trader")
-        self.profile = UserProfileModel.objects.create(user=self.user)  # UNVERIFIED
+        # tier 2（無上限）使分級額度閘門對這些聚焦 KYC 狀態的測試無影響
+        self.profile = UserProfileModel.objects.create(user=self.user, kyc_tier=2)  # UNVERIFIED
         self.usdt = CurrencyModel.objects.create(code="USDT", name="Tether")
         self.wallet = WalletModel.objects.create(
             user=self.user, asset_type=self.usdt,

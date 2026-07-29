@@ -8,7 +8,7 @@ from ledger.models import LedgerEntryModel
 from transaction.constants import OrderStatus
 from cryptography.fernet import Fernet
 from exchange.settings import FERNET_KEY, ISSUER
-from .constants import KycEvent, KycStatus
+from .constants import KycEvent, KycStatus, KycTierLevel
 
 
 class UserProfileModel(BaseTimeModel):
@@ -25,6 +25,7 @@ class UserProfileModel(BaseTimeModel):
     id_number = models.CharField(max_length=100, blank=True, default='', verbose_name='證件號碼')  # 之後要改成加密
     birth_date = models.DateField(null=True, blank=True, default=None, verbose_name='生日')
     nationality = models.CharField(max_length=50, blank=True, default='', verbose_name='國籍碼')
+    kyc_tier = models.IntegerField(choices=KycTierLevel.choices, default=KycTierLevel.HIGH, verbose_name='kyc/風險 等級')
 
     class Meta:
         verbose_name = "用戶其他資料"

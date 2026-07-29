@@ -19,7 +19,8 @@ from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from currency.models import CurrencyModel, TradingPairModel
-from member.models import WalletModel
+from member.constants import KycStatus
+from member.models import UserProfileModel, WalletModel
 from transaction.constants import OrderStatus, OrderType
 from transaction.models import OrderModel, TransactionModel
 
@@ -37,6 +38,9 @@ class OrderCreateMatchingTest(APITestCase):
     def setUp(self):
         self.seller = User.objects.create(username="seller")
         self.buyer = User.objects.create(username="buyer")
+        # KYC-B 下單閘門：買賣雙方都要 KYC 通過才能下單，故 setUp 直接給 APPROVED。
+        UserProfileModel.objects.create(user=self.seller, latest_kyc_status=KycStatus.APPROVED)
+        UserProfileModel.objects.create(user=self.buyer, latest_kyc_status=KycStatus.APPROVED)
         self.usdt = CurrencyModel.objects.create(code="USDT", name="Tether")
         self.btc = CurrencyModel.objects.create(code="BTC", name="Bitcoin")
         self.pair = TradingPairModel.objects.create(

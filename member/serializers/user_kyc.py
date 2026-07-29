@@ -60,6 +60,12 @@ class KYCCreateSerializer(serializers.ModelSerializer):
         fields = ['legal_name', 'id_number', 'birth_date', 'nationality']
 
 
+class KYCApproveSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserProfileModel
+        fields = ['kyc_tier']
+
+
 class KYCReasonSerializer(serializers.ModelSerializer):
     reason = serializers.CharField()
 

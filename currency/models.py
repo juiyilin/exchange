@@ -1,24 +1,32 @@
 from django.db import models
-
 from common.models import BaseTimeModel
 
 
+class LegalTenderModel(BaseTimeModel):
+    code = models.CharField(max_length=10, unique=True, verbose_name='代號')
+    name = models.CharField(max_length=10, verbose_name='名稱')
+    enable = models.BooleanField(default=False, verbose_name='是否啟用')
+
+    class Meta:
+        verbose_name = "法幣"
+        verbose_name_plural = "法幣"
+        constraints = [
+            models.UniqueConstraint(fields=['code', 'name'], name='unique_legal_code_name'),
+            models.UniqueConstraint(fields=['enable'], condition=models.Q(enable=True), name='unique_enable_true')  # 只能有一個enable=True
+        ]
+
+
 class CurrencyModel(BaseTimeModel):
-    code = models.CharField(
-        max_length=10,
-        unique=True,
-        verbose_name="貨幣代碼",
-        help_text="例如：USDT、BTC、ETH等",
-    )
-    name = models.CharField(
-        max_length=50,
-        verbose_name="貨幣名稱",
-        help_text="例如：Tether、Bitcoin、Ethereum等",
-    )
+    code = models.CharField(max_length=10, unique=True, verbose_name="貨幣代碼", help_text="例如：USDT、BTC、ETH等")
+    name = models.CharField(max_length=50, verbose_name="貨幣名稱", help_text="例如：Tether、Bitcoin、Ethereum等")
+    fiat_rate = models.DecimalField(max_digits=20, decimal_places=2, default=0, verbose_name="與法幣兌換匯率", help_text='1該幣=多少法幣')
 
     class Meta:
         verbose_name = "貨幣"
         verbose_name_plural = "貨幣"
+        constraints = [
+            models.UniqueConstraint(fields=['code', 'name'], name='unique_virtual_code_name')
+        ]
 
     def __str__(self):
         return f'{self.name}({self.code})'
@@ -41,9 +49,7 @@ class TradingPairModel(BaseTimeModel):
         verbose_name = "幣對"
         verbose_name_plural = "幣對"
         constraints = [
-            models.UniqueConstraint(
-                fields=['base_currency', 'quote_currency', 'symbol'],
-                name='unique_currency_pair')
+            models.UniqueConstraint(fields=['base_currency', 'quote_currency', 'symbol'], name='unique_currency_pair')
         ]
 
     def __str__(self):

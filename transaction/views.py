@@ -1,8 +1,10 @@
 from django.db import transaction
 from rest_framework import serializers, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
+from common.permissions import KYCApprovedPermission
 from transaction.exceptions import OrderNotCancelable
 from transaction.tasks import send_to_match_market
 from .models import OrderModel
@@ -16,6 +18,12 @@ class OrderViewSet(ModelViewSet):
     serializer_class = OrderSerializer
     filterset_fields = ['status']
     http_method_names = ['get', 'post']
+
+    def get_permissions(self):
+        if self.action == 'create':
+            # 下單前必須要通過kyc
+            return super().get_permissions() + [KYCApprovedPermission()]
+        return super().get_permissions()
 
     def get_queryset(self):
         queryset = super().get_queryset()

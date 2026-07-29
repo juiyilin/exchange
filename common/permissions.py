@@ -1,4 +1,5 @@
 from rest_framework.permissions import DjangoModelPermissions, BasePermission
+from member.constants import KycStatus
 
 
 class CustomDjangoModelPermissions(DjangoModelPermissions):
@@ -17,6 +18,9 @@ class CustomDjangoModelPermissions(DjangoModelPermissions):
 
 
 class DepositPermission(BasePermission):
+    """
+    可以入金的權限
+    """
     def has_permission(self, request, view):
         """
         Return `True` if permission is granted, `False` otherwise.
@@ -25,8 +29,20 @@ class DepositPermission(BasePermission):
 
 
 class ReviewKYCPermission(BasePermission):
+    """
+    可以審核kyc的權限
+    """
     def has_permission(self, request, view):
         """
         Return `True` if permission is granted, `False` otherwise.
         """
         return request.user.has_perm('member.review_kyc')
+
+
+class KYCApprovedPermission(BasePermission):
+    """
+    檢查kyc是否已通過
+    """
+    def has_permission(self, request, view):
+        return hasattr(request.user, 'profile') and request.user.profile.latest_kyc_status == KycStatus.APPROVED
+    

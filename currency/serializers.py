@@ -5,4 +5,4 @@ from .models import CurrencyModel
 class CurrencySerializer(serializers.ModelSerializer):
     class Meta:
         model = CurrencyModel
-        fields = ['id', 'code', 'name']
+        fields = ['id', 'code', 'name', 'fiat_rate']

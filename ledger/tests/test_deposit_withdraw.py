@@ -56,7 +56,7 @@ class DWBaseTestCase(APITestCase):
         self.btc = CurrencyModel.objects.create(code="BTC", name="Bitcoin")
         self.bob = User.objects.create(username="bob")
         # 出金端點有 KYC 閘門（未 APPROVED → 403,見 08-1 §6）：出金者 bob 需先過 KYC。
-        UserProfileModel.objects.create(user=self.bob, latest_kyc_status=KycStatus.APPROVED)
+        UserProfileModel.objects.create(user=self.bob, latest_kyc_status=KycStatus.APPROVED, kyc_tier=2)  # tier 2(無上限)：出金測試不被分級額度閘門擋
         # M-RBAC:入金權改由 can_deposit 權限承載（「管理員」群組持有），不再靠 is_staff。
         # 群組與權限由 member 的 sync_roles（post_migrate）建好,測試 DB 已就緒。
         self.admin = User.objects.create(username="admin")
