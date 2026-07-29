@@ -17,54 +17,15 @@
 
 ---
 
-## 目前進度（最後更新：**✅ M-RBAC 100% 完成——四角色 RBAC（交易者/客服/合規/管理員）全部實作完成,含註冊自動歸交易者,161 測試全綠。權限規格已獨立成 `09-1_permission_spec.md`。下一步:KYC-A 第二步（MinIO,`08-1` §8）或 KYC-B（下單閘門與分級）。**）
+## 目前進度（最後更新：**✅ KYC-B / B2 分級額度完成——全套測試綠。出金分級額度(法幣計價、參考法幣 `LegalTenderModel`＋各幣 `fiat_rate` 皆管理者維護、自然日、帳本累計、未設匯率不可出金、approve 由審核人員核給等級)全部到位。下一步:交易分級額度——把 `kyc_tier` 延伸到下單的每日交易額度(見下方 KYC-B「接續」),設計決策待定。**）
 
-> **KYC-A 拆兩步**：**第一步（✅ 完成）**＝欄位 + 狀態機 + admin 審核 + 出金閘門（文字欄位帶過證件）;**第二步（未做）**＝MinIO + 證件照上傳，規格 `08-1` §8 已預留。
->
-> **第一步落地重點（實作已完成）**：
-> - 兩層模型：`UserProfileModel.latest_kyc_status`（當前）+ `KycRecordModel`（append-only 歷史，`event_status` 記事件、含送審快照與 operator）。
-> - 狀態機 `UNVERIFIED→VERIFYING→APPROVED/REJECTED`，`REJECTED→VERIFYING`（重送）、`APPROVED→UNVERIFIED`（`revoke` 撤銷 / `reverify` 要求重驗，兩事件分開、reason 必填）。
-> - 出金閘門：`withdraw` 未 `APPROVED` → 403。
-> - 踩過的坑（已修）：送審守衛原本讀 `request.user.profile`（反向 OneToOne 會被 force_authenticate 重用的 user 快取），改成讀「等下要更新的同一個 `instance`」才正確擋掉重送。
->
-> **↑ 以上為已完成的 KYC-A 第一步（歷史）。目前焦點已切到 M-RBAC，見下。**
+當前任務（規格：`08-1` §10.1；里程碑歷史見下方「KYC-B」區塊）：
 
-### ✅ M-RBAC — 四角色身份組與權限　〔規格：`09-1_permission_spec.md`〕　完成（161 測試全綠）
+- [x] 規格 `08-1` §10.1：下單閘門位置、403、blast radius、與出金閘門對照。
+- [x] 測試 `transaction/tests/test_order_kyc_gate.py`（UNVERIFIED/VERIFYING/REJECTED/無 profile 下單→403 且錢不動、APPROVED→201）;並補 `test_orders`/`test_order_create_matching` 的 setUp 給 APPROVED。
+- [x] **（使用者）** `OrderViewSet.create` 開頭加閘門：未 APPROVED → 拒絕下單（動錢之前，同 `withdraw`）。跑 `member`＋`transaction` 全套測試轉綠。
 
-四角色 RBAC 已實作完成:**交易者 / 客服 / 合規 / 管理員**（`Role.TRADER/SUPPORT/COMPLIANCE/ADMIN`,`Group.name` 存英文碼、中文只當 label）。完整設計、權限對照表、踩坑清單見 **`docs/09-1_permission_spec.md`**（本輪從 `02-1` §6.5 獨立出來）。
-
-**落地重點：**
-
-- `member/constants.py` `Role`(TextChoices) + `member/rbac.py` `ROLES_PERMISSIONS` + `member/apps.py` `sync_roles`(掛 post_migrate,自動建 group)。
-- read-gating 只套管理型資源(User 清單、跨用戶 KYC);錢包/訂單維持 owner 讀自己的,see-all 分支從 `is_staff` 改看 `has_perm('member.view_walletmodel')`。
-- 自訂權限 `review_kyc`(合規審核)、`can_deposit`(管理員入金)——非 CRUD 動作用自訂 permission class 查 `has_perm`,不靠 `DjangoModelPermissions`(見 `09-1` §7)。
-- 授權全面從 `is_staff` 搬到 Group/權限;既有 `test_user_permissions`/`test_kyc`/`ledger` 入金與出金測試都跟著調整。
-- 測試:`member/tests/test_rbac.py`。
-
-- [x] `RegisterView`（`RegisterSerializer.create`）建完新用戶後 `user.groups.add(Group.objects.get(name=Role.TRADER))` — 自動歸「交易者」。回歸網:`test_rbac.py::RegisterAutoJoinsTraderTest`。
-
-> **下一步接手點**：M-RBAC 全數完成（161 測試全綠）。接著評估 KYC-A 第二步（MinIO,`08-1` §8）或 KYC-B（下單閘門與分級）。`OrderViewSet` 的角色閘門刻意留給 KYC-B（會動到 25+ 條交易測試），本里程碑不碰。
-
-**節奏原則：先把「基本」功能全部做完，再進入「進階」。**（基本/進階的分類見 `00_overall_spec.md` 第 5 節功能總表）
-
-已完成：
-
-- M1 幣別與錢包、M2 下單與凍結、M3 撮合與結算（同步）全部完成並有測試。
-- `OrderViewSet.create` 已串接 `match_order(order.id)`，下單即撮合（端到端）。
-- 重構：TradingPairModel（base/quote）、欄位 quantity、狀態 FULLY_FILLED、Transaction 用 buy_order/sell_order。
-- 結算 `WalletModel.objects.transfer_asset`（F() + 收款錢包 get_or_create）。
-- 測試在 `transaction/test/`（test_matching、test_orders、test_order_create_matching）。
-
-**✅ v0.1「基本」+ M4 生命週期 + M5 非同步化 + STP + M7 認證 + M6 併發安全皆完成。下一步建議 M-RBAC、M-KYC、或 M-日誌與帳本。**
-
-已完成（M6）：交易對序列化鎖（擋 deadlock）、冪等撮合（擋重複投遞超賣）、`release_frozen` 改 F()、錢包 CheckConstraint、併發壓力測試。
-已完成（M6 收尾）：cancel 也走交易對閘門，鎖順序全系統統一為 `pair → order → wallet`。
-
-**技術債：目前已清空。**（M7 的 `get_random_user()` 已移除、改綁 `request.user`；M6 的 cancel 鎖已補。）
-
-已完成（M4）：取消訂單、多凍結退款、終態不可變、擋改單（PUT/PATCH→405）。
-已完成（M5）：下單 `.delay()` 非同步撮合、Redis+worker、commit 後送任務、測試 eager。
-已完成（補強）：自我成交防護 STP。
+> 下一步（B1 完成後）：B2 分級額度，需先定案 3 個設計決策（計價單位 / 時間窗 / 計量來源），見 `08-1` §10.2。
 
 ---
 
@@ -134,7 +95,6 @@
 >
 > - `release_frozen(order)` 在 `member/models.py` WalletQuerySet，公式：買 `quantity*price − Σ(t.qty*t.price)`、賣 `quantity − Σ(t.qty)`，只在 order 進終態(FULLY_FILLED/CANCELED)時把差額 frozen→available。
 > - 心智模型：**任何訂單一進終態就 release_frozen，不分 maker/taker**。撮合 tasks.py 裡 maker 與 taker 各在 `mark_*_status` 之後呼叫一次。
-> - 踩過的坑：`release_frozen(maker)` 必須擺在 `mark_maker_status` 之後，否則 maker 狀態還沒變終態 → no-op，「先 taker 部分成交、後當 maker 成交完」的多凍會卡住不退（已加迴歸測試 OverFreezeTakerThenMakerTest）。
 > - 新測試檔：`transaction/test/test_cancel_refund.py`（9 條）。
 > - 併發互斥僅做到 cancel 的 select_for_update + 重檢；完整序列化留 M6。
 
@@ -152,7 +112,6 @@
 > - **Celery + DB 競態**：`.delay()` 是「立刻送訊息到 broker」，與 DB commit 無關。若在 `transaction.atomic()` 內送，worker 可能在 web 交易 commit 前就撈任務 → `get(order_id)` 抓不到。解法：把 `.delay()` 放在 `with transaction.atomic():` 區塊**之外**（commit 後才送）;此寫法只在「該 atomic 是最外層」時等價於 commit 後（ATOMIC_REQUESTS 目前關閉、create 未被巢狀，成立）。更防呆的寫法是 `transaction.on_commit(...)`。
 > - 注意 `with` 要包住 `serializer.is_valid()`，因為 serializer 內用 `select_for_update()` 鎖錢包查餘額，必須在交易內。
 > - 測試：凡是會 POST 下單（觸發 `.delay()`）的測試 class 要掛 `@override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)`，讓 task 在進程內同步跑、不漏送到真 broker（已套：test_orders、test_order_create_matching）。**正式環境絕不可開 eager。**
-> - 坑：`test_orders.py`（M2 寫的）改非同步後會漏送 task，因為當時沒有 eager override;已補上。
 
 ## M-撮合補強 — 自我成交防護（STP）　✅ 完成
 
@@ -168,7 +127,7 @@
 - [x] 餘額不變量：`WalletModel` 兩條 `CheckConstraint`（available/frozen >= 0），DB 層擋負值
 - [x] 併發壓力測試：`transaction/test/test_concurrency.py`（no-oversell、cross-fire 雙向、match/cancel 退款 race）
 
-> 實作重點 / 踩過的坑（給接手者）：
+> 實作重點 / 設計理由（給接手者）：
 >
 > - **deadlock 是真的**：只鎖訂單時，買賣兩邊同時撮合會「先鎖自己的單、再搶對手單」互鎖成環，PostgreSQL 報 `deadlock detected`。解法是**進撮合前先鎖交易對列**（序列化閘門），且**必須在鎖任何訂單之前**，順序反了就無效。不同交易對仍平行。
 > - **冪等性**：`match_order` 要能被重複呼叫不出錯（Celery at-least-once 會重送；一張單可能在自己任務跑前就被別張當 maker 吃掉成終態）。作法：`.get(id=..., status__in=[PENDING, PARTIALLY_FILLED])` 撈不到即 return；`taker_remaining` 用 `waiting_transaction_quantity()` 不用 `quantity`。
@@ -191,15 +150,11 @@
 - [x] `transaction/tasks.py`：抽出 `cancel_order(order_id, user)`，鎖順序 **pair → order → wallet**
 - [x] `OrderViewSet.cancel` 改成薄殼：呼叫 `cancel_order`，`DoesNotExist` 與 `OrderNotCancelable` 都轉 400
 
-> **實作重點 / 踩過的坑（給接手者）**：
+> **實作重點（給接手者）**：
 >
 > - **鎖 pair 的先有雞後有蛋**：要鎖 pair 得先知道是哪個 pair，但又不能先鎖訂單（順序就反了）。
 >   解法：**先「不鎖」讀出 `trading_pair_id`**（`trading_pair` 建立後永不改變，這個預讀安全——
 >   它只決定「要鎖哪一列」，真正的授權與狀態判斷都在鎖到之後才做），再鎖 pair、再 `select_for_update` 鎖訂單重檢。
-> - **取消絕不可非同步**：曾誤寫成 `cancel_order.delay(...)`。`.delay()` 是射後不理、立刻回傳，
->   `OrderNotCancelable` 永遠不會被 view 接到 → 終態的單也會回 200。而且 `cancel_order` 根本不是
->   `@shared_task`，沒有 `.delay` → `AttributeError` → 500。撮合非同步是因為它慢（要掃簿、連續成交）；
->   **取消只鎖一列、改狀態、退款，快且必須同步回報成敗**。
 > - **例外要繼承純 `Exception`，不要繼承 DRF 的 `APIException`**：`cancel_order` 是業務層純函式，
 >   會被併發測試/Celery/management command 呼叫，不該挾帶 HTTP 的 `status_code`。
 >   **業務層說「不能取消」，view 層才決定「那對外回 400」**。同理 `tasks.py` 不該 import DRF。
@@ -238,9 +193,8 @@
 - [x] 密鑰加密儲存：`encrypted_totp_secret`(BinaryField) 用 Fernet 加密;設定 FERNET_KEY、ISSUER
 - [x] 測試：`member/tests/test_2fa.py`（8 條，pyotp 自算碼）;全套 54 條綠
 
-> 實作重點 / 踩過的坑：
+> 實作重點：
 >
-> - **強制 2FA**：LoginSerializer 採「未啟用 2FA 就不准登入」。代價是 superuser（無 profile）走 JWT login 會炸 → 已用 `getattr(user, 'profile', None)` 擋。
 > - **valid_window=1**：verify_totp 一定要設，容忍 ±30 秒時鐘誤差;不設（預設 0）會讓 2FA 測試跨 30 秒邊界時間歇性失敗。
 > - 既有 `force_authenticate` 測試不受強制 2FA 影響（直接設 request.user、不走 login serializer）。
 > - 註冊豁免在這裡一併做掉了（RegisterView authentication_classes/permission_classes=[]）;M-KYC 只剩「KYC 欄位/審核/風險閘門」。
@@ -334,18 +288,31 @@
 - [x] **出金閘門**：`WalletViewSet.withdraw` 未 APPROVED → 403，動錢之前
 - [x] 驗證：全套 69 測試綠（含 `test_kyc` / `test_withdraw` / `test_2fa` / `test_register_wallets` / `test_user_permissions`）
 
-> **踩過的坑（給接手者）**：送審守衛一開始讀 `request.user.profile`（反向 OneToOne），在測試裡被 `force_authenticate` 重用的同一個 user 物件快取住 → 第二次送審讀到舊的 UNVERIFIED、擋不掉重送（回 201）。修法：守衛改讀「等下要更新的同一個 `instance = queryset.get(user=...)`」。通則：讀來判斷的列 = 要改的列（真要防併發還會 `select_for_update`，見 M6）。
-
 **第二步（MinIO + 證件上傳）— 規格 §8 已預留，之後再做：**
 
 - [ ] **MinIO 物件儲存**：Docker 起 MinIO、`django-storages` + `boto3`、私有 bucket、預簽名 URL
 - [ ] `KycDocumentModel`（一對多）+ 證件文件上傳（正反面 + 自拍）
 - [ ] （待辦）`id_number` 明文改 Fernet 加密或查詢遮罩（規格 §3.2 / §7）
 
-### KYC-B：下單閘門 + 分級額度（之後）
+### KYC-B：下單閘門 + 分級額度（進行中）　〔規格：`08-1` §10〕
 
-- [ ] 下單閘門（會牽動現有 25+ 條交易測試，每個測試用戶都得先過 KYC）
-- [ ] 分級額度 Tier 0/1/2：每日出金上限，需用 `LedgerEntryModel` 算時間區間累計
+**B1 下單閘門**（Claude 規格＋測試已完成，待使用者實作）：
+
+- [x] 規格：`08-1` §10.1（閘門位置、403、blast radius、與出金閘門對照）。
+- [x] 測試：`transaction/tests/test_order_kyc_gate.py`（UNVERIFIED/VERIFYING/REJECTED/無 profile→403 且錢不動、APPROVED→201）；`test_orders`/`test_order_create_matching` 的 setUp 補 APPROVED。
+- [x] **（使用者）** `OrderViewSet.create` 開頭加閘門：未 APPROVED → 拒絕下單（動錢之前，同 `withdraw`）。跑測試轉綠。
+
+> **實測 blast radius 修正**：原估「25+ 條交易測試」偏保守。下單閘門在 view 層，只影響「API POST 下單」的 `test_orders`（1 用戶）與 `test_order_create_matching`（2 用戶）；`test_matching`/`test_concurrency`/`test_cancel_refund` 走 ORM 建單 + 直接呼叫 service，不經 view、不受閘門影響。
+
+**B2 分級額度**（3 決策定案,Claude 規格＋測試已完成,待使用者實作;見 `08-1` 開發方規格「分級額度」）：
+
+- [x] 定案:①計價單位=法幣計價(參考法幣 `LegalTenderModel`(code 唯一、最多啟用一種)＋各幣匯率 `CurrencyModel.fiat_rate` 皆由管理者維護,當真實指數價佔位)②時間窗=自然日重置③計量來源=帳本流水(`LedgerEntryModel` reason=WITHDRAW);tier 存 `UserProfileModel.kyc_tier`。
+- [x] 規格＋測試:`08-1` 分級額度改寫成具體規格;`member/tests/test_kyc_tier.py`(額度內/累計剛好/累計超限 403 餘額不變/跨幣別法幣加總/自然日邊界/Tier2 無上限/未通過先被 KYC 閘門擋/approve 由審核人員核給等級 0/1/2、tier0 已通過但額度 0/未設匯率幣別不可出金);並更新 `test_withdraw.py`、`test_kyc.py`、`ledger/tests/test_deposit_withdraw.py`、`ledger/tests/test_ledger.py` 的出金 setUp 給 kyc_tier=2(免被額度閘門擋)。
+- [x] **（使用者，已完成、全套綠）** `UserProfileModel.kyc_tier`＋migration;`currency` 的 `LegalTenderModel`(code 唯一、enable 條件式唯一約束)＋`CurrencyModel.fiat_rate`;`member/constants.py` `KycTierLevel`＋`KYC_TIER_DAILY_LIMIT`;`WalletViewSet.withdraw` 每日額度閘門(`get_user_total_amount` 用 `Sum(fiat_rate×Abs(delta))`＋`localdate()`;rate=0 擋);`approve` body 帶 `kyc_tier`。
+
+### KYC-B / 交易分級額度【進行中】
+
+把 `kyc_tier` 延伸到**下單**:每日交易額度上限(同一等級、另一道閘門在 `OrderViewSet.create`,B1 布林閘門之後)。設計決策待定(計量對象=下單名目 vs 成交金額、取消退不退、額度來源)。blast radius:只影響經 API 下單的 `test_orders`、`test_order_create_matching`(需給下單用戶 tier);ORM 建單的撮合/併發/取消測試不受影響。
 - [ ] （待評估）**自動定期覆審**：Celery beat 定期掃描已通過但過期者 → 打回 `UNVERIFIED` 並寫 record（複用 `REVERIFY_REQUIRED` 或加 `EXPIRED`）。到期日若週期固定可由「最近 `APPROVED` record 的 `created_at` + 週期」推算，不必存欄位；只有週期依風險分級而異（EDD/RBA）才需在 profile 存 `kyc_next_review_at`。詳見 `08-1` §4.1 備忘。目前 KYC-A 的 `reverify` 是手動觸發，已足夠。
 - [ ] （待評估）**雙人覆核 / 四眼原則（maker-checker、職責分離）**：KYC 核准/拒絕改由「第一人提出 → `PENDING_APPROVAL` 待覆核 → 第二個不同的人確認 → APPROVED/REJECTED」，守衛 `確認者 ≠ 提出者`，防單一 staff 獨力放行詐欺帳號。做法＝插中間狀態 + 確認端點 + 守衛，`KycRecordModel.operator` 已是稽核基礎，不必重寫。偏內控/RBAC，可歸 M-RBAC 或另立里程碑。附帶小控制：staff 不得審自己的 KYC。詳見 `08-1` §5 備忘。KYC-A 先單一 staff 審即可。
 
@@ -391,10 +358,6 @@
       `transfer_to_frozen`(FREEZE)、`transfer_asset`(SETTLE，四筆靠 balance_field+正負分收付)、`release_frozen`(UNFREEZE/REFUND 依 order.status)、`withdraw`(WITHDRAW)
 - [x] `ledger/test/test_ledger.py` 全綠（model 契約、各套用點、對帳不變量）
 
-> 踩過的坑（給接手者）：`transfer_asset` 的 `balance_after` 要用「update 後重新讀到的值直接用」，
-> 不可再 ± delta（會重複扣）；且抓付款腿錢包時別把 `user=seller` 寫成 `user=buyer`（曾導致
-> SETTLE 的 balance_after 抓到錯人的錢包而對帳失敗）。
-
 ### DepositWithdrawModel（出入金紀錄）　✅ 完成（test_deposit_withdraw.py 6 條全綠）
 
 決策：範圍＝出金+入金都記帳（見 07 §4 / §4.1）。
@@ -408,10 +371,6 @@
 > **為什麼入金是 admin-only**：真實 CEX 沒有「用戶呼叫 API 說幫我入金」這種端點——用戶是在**鏈上**自己轉帳，
 > 交易所靠**監聽服務偵測到帳**才入帳。入金的本質是「憑空增加餘額」，範圍 1 沒有鏈上依據，
 > 若開放給一般用戶等於任何人都能鑄錢。這個 admin 端點是**鏈上監聽器的替身**，範圍 2 會被取代並移除。
->
-> **踩過的坑**：`create_deposit_ledgers` 的 `delta` 從 withdraw 複製過來忘了改號（入金應為 **+delta**），
-> 會讓對帳直接破功；入金必須 `get_or_create` 錢包（用戶第一次入金某幣時本來就還沒有錢包，
-> 與 withdraw 用 `.get()`、沒錢包回 400 的邏輯剛好相反）。
 
 > **範圍 2 的接續點**：入金核心（available += / 建 DW / 寫 ledger）保持可重用；屆時把觸發器從 admin 端點
 > 換成鏈上監聽器，並新增用戶端「取得充值地址」API、confirmations 邏輯、`tx_hash` 唯一（防同筆鏈上交易重複入帳）。
