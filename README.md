@@ -1,4 +1,6 @@
-# 虛擬貨幣交易所 side project
+# 虛擬貨幣交易所 side project(進行中)
+
+本專案規格為我與 Claude 討論後制定，Claude 撰寫單元測試，本人進行開發
 
 ## 套件管理: uv
 
